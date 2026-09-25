@@ -76,7 +76,8 @@ export async function assessPaymentReplacementDuplicates(ctx: CommandContext, in
             const identity = await inspectPaymentIdentity(ctx, [chainRow.publicId, row.publicId], executor);
             if (!identity.connected) return false;
             if (identity.activeFinancialEffectCount > 0) blockerPublicIds.push(row.publicId);
-            return true;
+            if (!identity.evidenceCovered) blockerPublicIds.push(row.publicId);
+            return identity.evidenceCovered;
         }));
         if (identityConflict.some(Boolean)) continue;
         const reviewedByChain = (await Promise.all([...chain].map((canonicalId) => {

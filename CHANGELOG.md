@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.58 - 2026-09-25
+
+### Fixed
+
+- Payment identity decisions now fail closed on incomplete participant evidence, revalidate expanded component ownership on execute/replay, route mutable duplicate blockers through explicit identity review, and expose bounded amount/payer/time snapshots for confirmation.
+- Payment workflow advisory locks now use transaction-local bounded waits with actionable idempotent retry context.
+- Bumped the frozen CreditSync plugin contract to 11.0.0 for the identity-preview output schema.
+
 ## v0.4.57 - 2026-09-25
 
 ### Fixed

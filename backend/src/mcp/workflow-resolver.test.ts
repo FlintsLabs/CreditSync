@@ -44,6 +44,18 @@ describe("workflow resolver policy", () => {
         }).success).toBe(true);
         expect(resolved.nextSteps.some((step) => step.toolName === "payment.replacement.duplicate-review.preview")).toBe(false);
     });
+
+    test("routes a mutable duplicate to identity decision before ordinary payment preview", () => {
+        const second = "0198c481-3e2b-7000-8000-000000000002";
+        const resolved = resolveWorkflowPolicy(
+            { intent: "receive_payment", profile: "full", target, attachments: "none" },
+            { targetAvailable: true, identityResolved: true, state: "mutable", evidenceReady: true, duplicateReviewRequired: true, identityDecisionRequired: true, duplicateBlockerPublicIds: [second] },
+            { profile: "full", catalogVersion },
+        );
+        expect(resolved.nextSteps[0]?.toolName).toBe("payment.identity-decision.preview");
+        expect(resolved.nextSteps.some((step) => step.toolName === "payment.preview")).toBe(false);
+        expect(resolved.prohibitedTools).toContain("payment.preview");
+    });
     test("does not route scheduled close-out to floating settlement", () => {
         const resolved = resolveWorkflowPolicy({ intent: "close_loan", profile: "loans", target: { kind: "loan", publicId: target.publicId }, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable", loanType: "scheduled", evidenceReady: true }, { ...base, profile: "loans" });
         expect(resolved.nextSteps.some((step) => step.toolName === "loan.settlement.preview")).toBe(false);

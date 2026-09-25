@@ -189,6 +189,10 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
             : null;
         return withObservation(result(input, profile, restoreCancelNextStep ? "confirmation_required" : inspectStep ? "next_step" : "needs_input", [inspectStep, restoreCancelNextStep], inspectStep ? [] : ["TARGET_REQUIRES_PARENT_READ"]), observation);
     }
+    if (input.target!.kind === "payment_intake" && input.intent === "receive_payment" && observation.duplicateReviewRequired === true && observation.identityDecisionRequired === true) {
+        const identityStep = identityDecisionStep(input, observation.duplicateBlockerPublicIds ?? []);
+        return withObservation(result(input, profile, identityStep ? "next_step" : "connection_required", [identityStep], ["PAYMENT_DUPLICATE_REQUIRES_REVIEW"], ["payment.preview", "payment.post", "payment.replacement.create"]), observation);
+    }
     if (input.target!.kind === "payment_intake" && observation.state === "cancelled" && input.intent === "receive_payment") {
         if (observation.duplicateReviewRequired === true) {
             const identityStep = observation.identityDecisionRequired ? identityDecisionStep(input, observation.duplicateBlockerPublicIds ?? []) : null;

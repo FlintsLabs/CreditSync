@@ -1021,7 +1021,7 @@
         "confirmReverse": "Confirm reversal",
         "lineage": { "repostedAfterReversal": "Posted again after reversal", "repostedBy": "A replacement payment was posted after this reversal", "viewOriginal": "View original payment", "viewRepost": "View reposted payment" },
         "semanticReviewConfirmation": "I reviewed the possible duplicate matches and confirmed this is a separate payment.",
-        "identity": { "distinct": "Distinct payment", "same": "Same payment", "preview": "Review exact pair", "confirm": "Confirm {{decision}} for this exact participant pair.", "confirmCheckbox": "I reviewed the current evidence and participant snapshots.", "execute": "Record decision" },
+        "identity": { "distinct": "Distinct payment", "same": "Same payment", "preview": "Review exact pair", "confirm": "Confirm {{decision}} for this exact participant pair.", "confirmCheckbox": "I reviewed the current evidence and participant snapshots.", "participantsLabel": "Payment participants", "unknownPayer": "Payer unavailable", "timeDifference": "{{seconds}} seconds from earliest", "execute": "Record decision" },
         "recovery": { "title": "Recover cancelled evidence", "description": "Create an immutable successor without changing the cancelled source or lowering its evidence requirement.", "reason": "Recovery reason", "preview": "Preview recovery", "requirement": "Required evidence slots: {{count}}", "successor": "Existing successor: {{id}}", "confirm": "I reviewed the source history and required evidence.", "execute": "Create recovery draft" },
         "audit": "Audit trail",
         "auditId": "Audit ID",

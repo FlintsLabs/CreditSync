@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 10.9.0; breaking changes require plugin 11.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 11.0.0; breaking changes require plugin 12.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -8803,6 +8803,54 @@
                 "pattern": "^[0-9a-f]{64}$",
                 "type": "string"
               },
+              "participantSnapshots": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "amount": {
+                      "maxLength": 32,
+                      "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                      "type": "string"
+                    },
+                    "payerName": {
+                      "anyOf": [
+                        {
+                          "maxLength": 500,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "publicId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "receivedAt": {
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                      "type": "string"
+                    },
+                    "timeDifferenceSeconds": {
+                      "maximum": 31536000,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "publicId",
+                    "amount",
+                    "payerName",
+                    "receivedAt",
+                    "timeDifferenceSeconds"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
               "previewHash": {
                 "pattern": "^[0-9a-f]{64}$",
                 "type": "string"
@@ -8813,6 +8861,7 @@
               "previewHash",
               "participantSnapshotHash",
               "participantPaymentIntakePublicIds",
+              "participantSnapshots",
               "decision",
               "expiresAt",
               "auditPublicId",

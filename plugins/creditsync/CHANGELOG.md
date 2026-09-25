@@ -1,5 +1,11 @@
 # CreditSync Plugin Changelog
 
+## v11.0.0 - 2026-09-25
+
+### Changed
+
+- Bumped the frozen contract for identity-decision previews to include bounded participant amount, payer, and timestamp discrepancy snapshots; existing clients must refresh to the new output schema.
+
 ## v10.9.0 - 2026-09-23
 
 ### Added

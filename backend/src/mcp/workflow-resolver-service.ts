@@ -8,6 +8,7 @@ import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, ty
 import type { ToolProfile } from "./catalog-types";
 import { effectivePaymentEvidence } from "../services/payment-effective-evidence-service";
 import { countAuthoritativeEvidenceAttempts } from "../services/financial-evidence-requirement-service";
+import { assessPaymentReplacementDuplicates } from "../services/payment-duplicate-guard";
 import { inspectPaymentReplacement } from "../services/payment-replacement-service";
 import { classifyPaymentWorkflowBlocker } from "../services/payment-workflow-blockers";
 import { paymentDuplicateReviewMemberships } from "../db/schema";
@@ -45,14 +46,17 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
     const ready = evidenceRows.filter((row) => row.status === "ready" && row.finalizedAt !== null && row.fileId !== null).length;
     const duplicateReview = intake.status === "cancelled"
         ? await inspectPaymentReplacement(ctx, publicId).catch(() => null)
-        : null;
+        : await assessPaymentReplacementDuplicates(ctx, intake).catch(() => null);
     const duplicateIds = duplicateReview?.blockerPublicIds ?? [];
     const duplicateRows = duplicateIds.length ? await db.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, duplicateIds))) : [];
     const participantIds = [intake.id, ...duplicateRows.map((row) => row.id)];
     const lineaged = duplicateRows.length > 0 && (await db.select({ id: paymentReplacementLineages.id }).from(paymentReplacementLineages).where(and(eq(paymentReplacementLineages.tenantId, ctx.tenantId), or(inArray(paymentReplacementLineages.sourcePaymentIntakeId, participantIds), inArray(paymentReplacementLineages.replacementPaymentIntakeId, participantIds))))).length > 0;
     const legacyMembership = duplicateRows.length > 0 && (await db.select({ id: paymentDuplicateReviewMemberships.id }).from(paymentDuplicateReviewMemberships).where(and(eq(paymentDuplicateReviewMemberships.tenantId, ctx.tenantId), or(inArray(paymentDuplicateReviewMemberships.canonicalPaymentIntakeId, participantIds), inArray(paymentDuplicateReviewMemberships.candidatePaymentIntakeId, participantIds))))).length > 0;
     const malformedCandidate = duplicateRows.some((candidate) => candidate.status !== "cancelled" || candidate.amount !== intake.amount || candidate.receivedAt.getTime() !== intake.receivedAt.getTime() || !candidate.payerName || !intake.payerName || normalizeBorrowerText(candidate.payerName) !== normalizeBorrowerText(intake.payerName));
-    const identityDecisionRequired = duplicateRows.length > 0 && (lineaged || legacyMembership || malformedCandidate);
+    // Any live duplicate blocker must enter the explicit identity workflow,
+    // including ordinary mutable targets. The cancelled-only replacement
+    // resolver cannot legally clear a mutable duplicate.
+    const identityDecisionRequired = duplicateRows.length > 0 && (lineaged || legacyMembership || malformedCandidate || intake.status !== "cancelled");
     return {
         targetAvailable: true, identityResolved: true, state: intake.status === "cancelled" ? "cancelled" : intake.status === "duplicate" ? "duplicate" : intake.status === "reversed" ? "reversed" : intake.status === "posted" ? "posted" : "mutable",
         evidenceRequired: required, evidenceReady: evidenceTotal <= 20 && attemptTotal <= 20 && (!required || (expected > 0 && ready >= expected && evidenceTotal === ready)),
