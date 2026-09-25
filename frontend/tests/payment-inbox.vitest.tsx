@@ -48,6 +48,30 @@ describe("PaymentInbox", () => {
         } });
     });
 
+    test("shows identity snapshots and requires a fresh confirmation for each preview", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.post).mockResolvedValue({ data: {
+            identityDecisionPreviewPublicId: "review-preview", previewHash: "snapshot-hash", decision: "distinct_payment",
+            participantPaymentIntakePublicIds: [INTAKE_A, INTAKE_B], expiresAt: "2026-08-10T12:00:00.000Z",
+            participantSnapshots: [
+                { publicId: INTAKE_A, amount: "30.30", payerName: "Reviewed payer A", receivedAt: "2026-08-10T09:30:00.000Z", timeDifferenceSeconds: 0 },
+                { publicId: INTAKE_B, amount: "30.30", payerName: "Reviewed payer B", receivedAt: "2026-08-10T09:31:00.000Z", timeDifferenceSeconds: 60 },
+            ],
+        } });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+        await user.click(await screen.findByRole("button", { name: /^A/ }));
+        await user.click(await screen.findByRole("checkbox", { name: /reviewed the possible duplicate/i }));
+        await user.click(screen.getByRole("button", { name: /review exact pair/i }));
+        expect(await screen.findByText(/Reviewed payer A/)).toBeInTheDocument();
+        expect(screen.getByText(/Reviewed payer B/)).toBeInTheDocument();
+        expect(screen.getByText(/60 seconds from earliest/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /record decision/i })).toBeDisabled();
+        await user.click(screen.getByRole("checkbox", { name: /current evidence and participant snapshots/i }));
+        expect(screen.getByRole("button", { name: /record decision/i })).toBeEnabled();
+        await user.click(screen.getByRole("button", { name: /review exact pair/i }));
+        await waitFor(() => expect(screen.getByRole("button", { name: /record decision/i })).toBeDisabled());
+    });
+
     test("renders flat rows and keeps filters when moving to the next server page", async () => {
         const user = userEvent.setup();
         render(<MemoryRouter><PaymentInbox /></MemoryRouter>);

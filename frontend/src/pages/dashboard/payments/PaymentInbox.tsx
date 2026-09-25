@@ -257,6 +257,7 @@ export default function PaymentInbox() {
     const previewIdentity = (candidatePublicId: string) => void mutate(async () => {
         const response = await api.post(`/payment-intakes/${detail!.publicId}/identity-decision/preview`, { participantPaymentIntakePublicIds: [candidatePublicId], decision: identityDecision, reason: "Operator reviewed the exact payment pair", idempotencyKey: crypto.randomUUID() });
         setIdentityPreview(response.data);
+        setRecoveryConfirmed(false);
     }, false);
     const executeIdentity = () => void mutate(async () => {
         if (!identityPreview) return;

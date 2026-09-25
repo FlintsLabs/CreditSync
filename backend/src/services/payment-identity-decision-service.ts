@@ -62,29 +62,30 @@ async function requireParticipantEvidenceCoverage(ctx: CommandContext, rows: Arr
 }
 
 async function recoveryCoverageAuthorizesPair(ctx: CommandContext, canonicalId: number, incompleteId: number, executor: DbExecutor) {
-    // A cancelled source may remain incomplete forever.  It is covered only
-    // when this exact canonical is its immutable, complete recovery successor
-    // and the append-only recovery execution receipt exists.  Lineage alone
-    // is intentionally insufficient: this is the explicit audited recovery
-    // rule, not an arbitrary ancestry exemption.
-    const lineage = await executor.query.paymentReplacementLineages.findFirst({ where: and(
-        eq(paymentReplacementLineages.tenantId, ctx.tenantId),
-        eq(paymentReplacementLineages.sourcePaymentIntakeId, incompleteId),
-        eq(paymentReplacementLineages.replacementPaymentIntakeId, canonicalId),
-    ) });
-    if (!lineage) return false;
-    const receipt = await executor.query.paymentEvidenceRecoveryExecutions.findFirst({ where: and(
-        eq(paymentEvidenceRecoveryExecutions.tenantId, ctx.tenantId),
-        eq(paymentEvidenceRecoveryExecutions.lineageId, lineage.id),
-    ) });
-    if (!receipt) return false;
-    const [source, canonical] = await Promise.all([
-        executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, incompleteId)) }),
-        executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, canonicalId)) }),
-    ]);
-    if (!source || !canonical || source.status !== "cancelled" || source.postedAt !== null || source.repostOfIntakeId !== null || source.replacementOfIntakeId !== null) return false;
-    const canonicalState = await participantEvidenceComplete(ctx, canonical, executor);
-    return canonicalState.complete;
+    // Follow only confirmed recovery edges. Every cancelled intermediate must
+    // have its own execution receipt; ordinary replacement ancestry is not
+    // evidence coverage. This also supports recovering a cancelled recovery.
+    if (canonicalId === incompleteId) return false;
+    const visited = new Set<number>();
+    let currentId = incompleteId;
+    while (!visited.has(currentId)) {
+        visited.add(currentId);
+        const source = await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, currentId)) });
+        if (!source || source.status !== "cancelled" || source.postedAt !== null || source.repostOfIntakeId !== null) return false;
+        const lineage = await executor.query.paymentReplacementLineages.findFirst({ where: and(eq(paymentReplacementLineages.tenantId, ctx.tenantId), eq(paymentReplacementLineages.sourcePaymentIntakeId, currentId)) });
+        if (!lineage) return false;
+        const receipt = await executor.query.paymentEvidenceRecoveryExecutions.findFirst({ where: and(
+            eq(paymentEvidenceRecoveryExecutions.tenantId, ctx.tenantId),
+            eq(paymentEvidenceRecoveryExecutions.lineageId, lineage.id),
+            eq(paymentEvidenceRecoveryExecutions.sourcePaymentIntakeId, currentId),
+        ) });
+        if (!receipt) return false;
+        const child = await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, lineage.replacementPaymentIntakeId)) });
+        if (!child || child.replacementOfIntakeId !== currentId) return false;
+        if (child.id === canonicalId) return (await participantEvidenceComplete(ctx, child, executor)).complete;
+        currentId = child.id;
+    }
+    return false;
 }
 
 async function effectiveDecisions(tenantId: string, executor: DbExecutor) {

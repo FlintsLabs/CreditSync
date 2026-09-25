@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.60 - 2026-09-25
+
+### Fixed
+
+- Follow explicitly executed recovery receipts across cancelled recovery successors without weakening evidence requirements; independently test incomplete evidence, repeated recovery posting, collector permission drift, lock timeout/retry, and mutable duplicate resolution.
+- Require fresh UI confirmation after every identity preview, with participant snapshot and time-difference regression coverage.
+
 ## v0.4.59 - 2026-09-25
 
 ### Fixed
