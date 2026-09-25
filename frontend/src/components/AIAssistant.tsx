@@ -58,7 +58,7 @@ export function AIAssistant() {
     };
 
     return (
-        <div className="fixed bottom-20 md:bottom-8 right-4 md:right-8 z-[100] flex flex-col items-end">
+        <div className="fixed bottom-24 md:bottom-8 right-4 md:right-8 z-[100] flex flex-col items-end">
             {/* Chat Window */}
             {isOpen && (
                 <Card className="w-[320px] md:w-[380px] h-[450px] mb-4 shadow-2xl flex flex-col animate-in slide-in-from-bottom-5 duration-300">
