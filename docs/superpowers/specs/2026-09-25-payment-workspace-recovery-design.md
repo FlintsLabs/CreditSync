@@ -1,7 +1,7 @@
 # Payment workspace and recoverable posting design
 
 Date: 2026-09-25
-Status: Written specification for review. The user approved the conceptual design in the task; implementation and production changes are not part of this document change.
+Status: Written specification approved by the user on 2026-09-25. Detailed implementation plan: `docs/superpowers/plans/2026-09-25-payment-workspace-recovery.md`. Implementation and production changes are not part of this document change.
 Source baseline: `250f523`.
 
 ## 1. ข้อตกลงกับผู้ใช้

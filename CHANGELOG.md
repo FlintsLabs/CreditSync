@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.63 - 2026-09-25
+
+### Added
+
+- Recorded approval of the recoverable payment workspace specification and added its phased implementation plan, shared service contracts, regression and migration gates, supervised tmux handoff, and separately authorized backlog recovery procedure; documentation only, with no runtime or financial changes.
+
 ## v0.4.62 - 2026-09-25
 
 ### Added
