@@ -15,7 +15,7 @@ const dashboardSource = readFileSync(
 describe("authenticated responsive page layout", () => {
     it("uses compact mobile page edges without adding a second Dashboard inset", () => {
         expect(layoutSource).toContain(
-            'className="min-w-0 flex-1 overflow-x-hidden p-4 md:p-8"',
+            'className="min-w-0 flex-1 overflow-x-hidden p-4 pb-20 md:p-8 md:pb-8"',
         );
         expect(dashboardSource).toContain(
             'className="flex-1 space-y-6 pb-10"',
