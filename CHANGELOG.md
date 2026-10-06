@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.67 - 2026-10-07
+
+### Changed
+
+- Updated MCP discovery acceptance records with independent final-HEAD gate results, including the successful pinned conformance recheck; retained the earlier blocked attempt as history.
+
 ## v0.4.66 - 2026-10-06
 
 ### Added

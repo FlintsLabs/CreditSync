@@ -1,6 +1,22 @@
 # MCP tool discovery verification
 
-Verification run on 2026-10-06 in the isolated `codex/mcp-tool-discovery` worktree. The application-source HEAD under test was `574b5296b2be3cfcfd0734bd0d30359dca37903d` (the Task 5 confirmation-ordering fix). Task 6 adds documentation only after these gates; the remote controller is responsible for independently repeating the required gates and recording its final-HEAD review.
+## Independent final acceptance — 2026-10-07
+
+The remote controller independently reviewed the implementation at `782a0b361409233956d6cb87edaa4ddbc40d10c2` on `codex/mcp-tool-discovery`. The recorded gate bundle is `/home/flintstone/.local/state/creditsync/mcp-tool-discovery-20261006/independent-gates-1.json`; each entry names this exact tested HEAD and exit code 0. The logs remain outside Git. This section supersedes the earlier gate status below; the earlier results are retained as history.
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Serialized disposable PostgreSQL backend suite | **Pass**, exit 0 | `independent-1-backend-disposable.log`; disposable helper completed. The earlier detailed run recorded 1,291 pass markers, 0 failures, and 3 cache-dependent skips across 167 files; required deferral integration coverage executed. |
+| Backend typecheck | **Pass**, exit 0 | `independent-1-backend-typecheck.log` (`tsc --noEmit`). |
+| Frontend tests, lint, and build | **Pass**, exit 0 | `independent-1-frontend-tests.log` records 67 files / 316 tests passed; lint and build logs also exit 0. Build retains the existing large-chunk warning. |
+| Plugin tests and validator | **Pass**, exit 0 | `independent-1-plugin-tests.log` records 61 tests / 1,955 assertions; validator log confirms the generated plugin contract. |
+| Discovery evaluation and benchmark | **Pass**, exit 0 | `independent-1-discovery-evaluation.log` and `independent-1-discovery-benchmark.log`; synthetic metadata evaluation only, `modelEvaluation: not_run`. |
+| Snapshot reproducibility | **Pass**, exit 0 | `independent-1-reproducibility.log`; two generations were byte-identical. |
+| MCP conformance | **Pass**, exit 0 | `independent-1-mcp-conformance.log` and `conformance-setup-recheck.log`; pinned upstream `7169291ec0b68eb370fddcd9947313ab0d5e4156` / `0.2.0-alpha.11`, 6/6 scenarios and 58/58 checks passed. The fixture is synthetic and reports no database side effects. |
+
+The earlier 2026-10-06 conformance attempt below remains a historical blocked result: its checkout lacked `commander`. The independent recheck used an already available checkout and completed without installing a new dependency. There are no currently blocked gates in the evidence bundle. Live production catalog alignment, client/host acceptance, and model tool-selection accuracy remain unverified; no production MCP or financial records were accessed.
+
+Initial verification run on 2026-10-06 in the isolated `codex/mcp-tool-discovery` worktree. The application-source HEAD under test was `574b5296b2be3cfcfd0734bd0d30359dca37903d` (the Task 5 confirmation-ordering fix). Its gate statuses below are historical; the independent final-acceptance section above records the later results at the implementation HEAD.
 
 ## Catalog and generated references
 
@@ -26,7 +42,7 @@ Verification run on 2026-10-06 in the isolated `codex/mcp-tool-discovery` worktr
 | `bun run plugins/creditsync/scripts/evaluate-discovery.ts` | **Pass**, exit 0 | 16 deterministic synthetic cases and metrics above. `modelEvaluation` is `not_run`; no sanitized recorded model traces were supplied. |
 | `git diff --check 0f77e82c62f558aa440ea5b46592068b117f6a2b..574b5296b2be3cfcfd0734bd0d30359dca37903d` | **Pass** | No whitespace errors in the implementation diff. |
 
-The complete task log and individual command outputs are outside Git under `/home/flintstone/.local/state/creditsync/mcp-tool-discovery-20261006/`. The official conformance runner is the only blocked gate; its missing external dependency was not installed. No assertions or hard cases were removed to obtain these results.
+The complete task log and individual command outputs are outside Git under `/home/flintstone/.local/state/creditsync/mcp-tool-discovery-20261006/`. At the time of this initial run, the official conformance runner was the only blocked gate because its checkout lacked an external dependency. No assertions or hard cases were removed to obtain those initial results.
 
 ## Safety review
 

@@ -14,7 +14,7 @@ Task 1 review policy ruling (2026-10-06): verified service behavior takes preced
 
 **Spec:** `docs/superpowers/specs/2026-10-06-mcp-tool-discovery-design.md` (read in full before execution).
 
-Status: approved on 2026-10-06; Tasks 1–4 complete on the feature branch, Tasks 5–6 remain not started.
+Status: approved on 2026-10-06; Tasks 1–6 and independent final acceptance completed on `codex/mcp-tool-discovery` at `782a0b361409233956d6cb87edaa4ddbc40d10c2`. No merge, push, deployment, or live acceptance was authorized or performed.
 
 ## Global Constraints
 
@@ -136,10 +136,10 @@ Status: approved on 2026-10-06; Tasks 1–4 complete on the feature branch, Task
 - [x] Backend `bun run typecheck` and `bun run mcp:discovery:benchmark` passed. Benchmark measured 941,583 modern full-catalog wire bytes versus 133,182 discovery-profile bytes; `bun run mcp:conformance` was attempted with the pinned runner, but all six scenarios were blocked by missing `commander` in the source checkout. No dependencies were installed; this is not recorded as a conformance pass.
 - [x] Frontend `bun run test` (316 tests), `bun run lint`, and `bun run build` passed; build emitted a >500 kB JavaScript chunk warning.
 - [x] Plugin tests (61), validator, and deterministic evaluator passed; contract/profiles/guide were regenerated twice with identical hashes and no generated diff. Model traces were not supplied; model evaluation is `not_run`.
-- [ ] Remote controller: independently review and rerun the required gates at the final documentation commit. Record any gate-specific limitation and preserve the conformance block; do not claim all gates pass.
+- [x] Remote controller independently reviewed the final implementation HEAD and verified the serialized disposable backend suite, backend typecheck, frontend tests/lint/build, plugin tests/validator, discovery evaluation/benchmark, snapshot reproducibility, and MCP conformance. All recorded exit codes are 0; the final conformance recheck passed 6/6 scenarios and 58/58 checks. The earlier blocked conformance attempt remains documented as history.
 - [x] Wrote the evidence-backed verification report with results, skips/blockers, deterministic search metrics, measured bytes, refresh procedure, and historical mismatch evidence: the 2026-09-13 live observation recorded 134 tools while the later pre-change source baseline had 145; this branch has 147. No Task6 live MCP query was made; deployed alignment remains unverified.
-- [x] Completed the isolated feature branch handoff without merge, push, deployment, or live financial actions. Final commit/HEAD is recorded in the external `task6-final.md`; remote-controller final verification remains pending as stated above.
+- [x] Completed the isolated feature branch handoff without merge, push, deployment, or live financial actions. Independent final gate results are recorded in `docs/operations/mcp-tool-discovery-verification.md`; live/client acceptance remains unverified.
 
 ## Plan self-review
 
-All spec requirements map to Tasks 1..6: exhaustive guidance/description truth (1), discovery/query/version/profile safety (2), missing financial operation and state-aware deferral (3), small entry surface/complete help (4), generated contract/skills/versions/datasets/host setup (5), and verification/reporting (6). The approved branch is implemented; final independent controller review is pending. Official conformance could not execute because its pinned checkout lacks `commander`, which was not installed under the no-new-dependencies constraint. Live/client acceptance remains outside this branch verification.
+All spec requirements map to Tasks 1..6: exhaustive guidance/description truth (1), discovery/query/version/profile safety (2), missing financial operation and state-aware deferral (3), small entry surface/complete help (4), generated contract/skills/versions/datasets/host setup (5), and verification/reporting (6). The approved branch and independent final acceptance are complete. The first conformance attempt was blocked because that checkout lacked `commander`; the independent recheck passed using an available pinned checkout without adding dependencies. Live/client acceptance remains outside this branch verification.
