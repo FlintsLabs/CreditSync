@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.69 - 2026-10-07
+
+### Changed
+
+- Synchronized the authenticated UI release footer with application `0.4.69`, MCP schema `1.0`, and the actual CreditSync plugin `12.0.0` manifest; point its changelog link at this release branch until it is integrated.
+- Excluded environment files, secrets, dependencies, generated output, and logs from backend Docker build contexts, preserving the upstream context-protection fix.
+
+### Fixed
+
+- Added a regression check that derives the displayed application version from the newest changelog heading and the plugin version from its manifest.
+
 ## v0.4.68 - 2026-10-07
 
 ### Fixed
