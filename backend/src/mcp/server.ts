@@ -14,7 +14,7 @@ import { persistMcpDiagnosticBestEffort } from "../services/mcp-diagnostic-servi
 import { mcpDiagnosticCategories, mcpDiagnosticStages, safeDiagnosticRuntimeCategories } from "../lib/mcp-diagnostic-types";
 import { createModernMcpHandler, isLegacyRequest } from "./modern";
 import { toolsForProfile, toolNamesForProfile } from "./tool-profiles";
-import { MCP_TOOL_NAMES, type McpToolDefinition, type McpToolName, type ToolProfile } from "./catalog-types";
+import { MCP_TOOL_NAMES, TOOL_PROFILE_NAMES, type McpToolDefinition, type McpToolName, type ToolProfile } from "./catalog-types";
 import { createHash } from "node:crypto";
 import { decodeCatalogCursor, encodeCatalogCursor, MCP_PAGE_SIZE } from "./catalog-pagination";
 import { WORKFLOW_VERSION } from "./workflow-registry";
@@ -1578,7 +1578,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "system.error-diagnostic.get": z.object({ correlationId: uuid, items: z.array(diagnosticItemOutput).max(100) }).strict(),
     "system.error-diagnostic.list": z.object({ items: z.array(diagnosticItemOutput).max(100), nextCursor: z.string().nullable() }).strict(),
     "workflow.resolve": workflowResolverOutput,
-    "tool.catalog.search": z.object({ profile: z.enum(["full", "core-read", "payments", "loans", "disbursements", "admin"]), catalogVersion: z.string().max(160), guidanceVersion: z.string().max(160), status: z.enum(["matches", "needs_clarification", "no_match", "connection_required", "refresh_required"]), matches: z.array(z.object({ toolName: z.enum(MCP_TOOL_NAMES), purpose: z.string().max(320), domain: z.enum(["borrowers", "payments", "loans", "disbursements", "intermediaries", "funding", "diagnostics", "discovery"]), whenToUse: z.array(z.string().max(320)).max(8), prerequisites: z.array(z.string().max(320)).max(8), sideEffects: z.array(z.string().max(320)).max(8), retrySafety: z.string().max(320), requiresHumanConfirmation: z.boolean(), relatedTools: z.array(z.enum(MCP_TOOL_NAMES)).max(8) }).strict()).max(10), hasMore: z.boolean(), nextCursor: z.string().max(512).nullable(), requiredProfiles: z.array(z.enum(["full", "core-read", "payments", "loans", "disbursements", "admin"])).max(6) }).strict(),
+    "tool.catalog.search": z.object({ profile: z.enum(TOOL_PROFILE_NAMES), catalogVersion: z.string().max(160), guidanceVersion: z.string().max(160), status: z.enum(["matches", "needs_clarification", "no_match", "connection_required", "refresh_required"]), matches: z.array(z.object({ toolName: z.enum(MCP_TOOL_NAMES), purpose: z.string().max(320), domain: z.enum(["borrowers", "payments", "loans", "disbursements", "intermediaries", "funding", "diagnostics", "discovery"]), whenToUse: z.array(z.string().max(320)).max(8), prerequisites: z.array(z.string().max(320)).max(8), sideEffects: z.array(z.string().max(320)).max(8), retrySafety: z.string().max(320), requiresHumanConfirmation: z.boolean(), relatedTools: z.array(z.enum(MCP_TOOL_NAMES)).max(8) }).strict()).max(10), hasMore: z.boolean(), nextCursor: z.string().max(512).nullable(), requiredProfiles: z.array(z.enum(TOOL_PROFILE_NAMES)).max(6) }).strict(),
 };
 
 export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {

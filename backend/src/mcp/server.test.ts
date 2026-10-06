@@ -95,9 +95,12 @@ async function startServer(input: {
     onMetric?: CreateMcpHttpPluginInput["onMetric"];
     consumeRateLimit?: CreateMcpHttpPluginInput["consumeRateLimit"];
     resolvePrincipal?: CreateMcpHttpPluginInput["resolvePrincipal"];
+    profile?: CreateMcpHttpPluginInput["profile"];
+    endpoint?: string;
 }) {
     const pluginInput: CreateMcpHttpPluginInput = {
         config: input.runtimeConfig ?? config(),
+        profile: input.profile,
         handlers: handlers(input.toolHandlers ?? {}),
         preflightHandlers: input.preflightHandlers,
         resolvePrincipal: input.resolvePrincipal ?? (async ({ tenantId, actorEmail }) => {
@@ -112,7 +115,7 @@ async function startServer(input: {
         persistDiagnostic: input.persistDiagnostic,
         parseToolInput: input.parseToolInput,
     };
-    const app = new Elysia().use(createMcpHttpPlugin(pluginInput)).listen({ hostname: "127.0.0.1", port: 0 });
+    const app = new Elysia().use(createMcpHttpPlugin(pluginInput, input.endpoint)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
     return `http://127.0.0.1:${app.server!.port}`;
 }
@@ -170,6 +173,19 @@ describe("CreditSync stateless MCP contract", () => {
         }
         expect(calls).toBe(1);
         expect(auditLookups).toBe(0);
+        await client.close();
+    });
+
+    test("discovery profile catalog search output accepts the serving profile and connection profile", async () => {
+        const baseUrl = await startServer({ profile: "discovery", endpoint: "/mcp/discovery", toolHandlers: {
+            "tool.catalog.search": async (_ctx, input) => ({ profile: input.__profile, catalogVersion: input.__catalogVersion, guidanceVersion: input.__guidanceVersion, status: "connection_required", matches: [], hasMore: false, nextCursor: null, requiredProfiles: ["loans"] }),
+        } });
+        const client = new Client({ name: "creditsync-discovery-contract-test", version: "1.0.0" });
+        const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/discovery`), { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } });
+        await client.connect(transport);
+        const result = await client.callTool({ name: "tool.catalog.search", arguments: { query: "defer installment" } });
+        expect(result.isError).not.toBe(true);
+        expect((result.structuredContent as any).data).toMatchObject({ profile: "discovery", status: "connection_required", requiredProfiles: ["loans"] });
         await client.close();
     });
 
