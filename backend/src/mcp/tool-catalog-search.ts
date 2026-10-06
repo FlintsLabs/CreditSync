@@ -59,6 +59,7 @@ export function searchToolCatalog(input: ToolCatalogSearchInput, context: Contex
         if (overlap) scores.set(name, Math.max(scores.get(name) ?? 0, 100 + overlap * 10 - i / 10000));
     }
     const ranked = [...scores].filter(([n, score]) => defs.has(n as McpToolName) && score > 0).sort((a, b) => b[1] - a[1] || defs.get(a[0] as McpToolName)!.i - defs.get(b[0] as McpToolName)!.i);
+    if (input.cursor !== undefined && offset >= ranked.length) return { ...base, status: "refresh_required", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };
     const visible = ranked.filter(([name]) => active.has(name as McpToolName));
     const unavailable = ranked.filter(([name]) => !active.has(name as McpToolName));
     if (unavailable.length && (!visible.length || unavailable[0]![1] > visible[0]![1])) {
@@ -71,7 +72,6 @@ export function searchToolCatalog(input: ToolCatalogSearchInput, context: Contex
         return { ...base, status: "connection_required", matches: [], hasMore: false, nextCursor: null, requiredProfiles };
     }
     if (!visible.length) return { ...base, status: "no_match", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };
-    if (input.cursor && offset >= visible.length) return { ...base, status: "refresh_required", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };
     const ambiguous = visible.length > 1 && visible[0][1] === visible[1][1] || visible[0][1] < 200;
     const page = visible.slice(offset, offset + limit);
     const hasMore = offset + page.length < visible.length;

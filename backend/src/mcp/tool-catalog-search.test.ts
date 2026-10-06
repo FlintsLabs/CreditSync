@@ -75,10 +75,19 @@ describe("tool catalog search", () => {
     });
     it("refreshes for offsets at or beyond the ranked result length", () => {
         const query = "borrower.search";
-        const digest = createHash("sha256").update(query).digest("hex").slice(0, 20);
+        const digest = createHash("sha256").update("borrower search").digest("hex").slice(0, 20);
         const cursor = Buffer.from(JSON.stringify({ q: digest, p: "full", c: "cat-v1", g: TOOL_GUIDANCE_VERSION, o: 1 })).toString("base64url");
         const singleResult = { ...ctx, catalog: catalog.filter((tool) => tool.name === "borrower.search") };
         expect(searchToolCatalog({ query, cursor }, singleResult).status).toBe("refresh_required");
+    });
+    it("rejects out-of-result cursors before hiding profile-unavailable matches", () => {
+        const query = "borrower.create";
+        const digest = createHash("sha256").update("borrower create").digest("hex").slice(0, 20);
+        const cursor = Buffer.from(JSON.stringify({ q: digest, p: "core-read", c: "cat-v1", g: TOOL_GUIDANCE_VERSION, o: 1 })).toString("base64url");
+        const coreRead = { ...ctx, profile: "core-read" as const, catalog: catalog.filter((tool) => tool.name === "borrower.create") };
+
+        expect(searchToolCatalog({ query }, coreRead)).toMatchObject({ status: "connection_required", matches: [] });
+        expect(searchToolCatalog({ query, cursor }, coreRead)).toMatchObject({ status: "refresh_required", matches: [] });
     });
     it("distinguishes high-risk capability phrases and keeps Thai unspaced queries useful", () => {
         expect(searchToolCatalog({ query: "วันชำระงวดแรก" }, ctx).matches[0]?.toolName).toBe("loan.payment-start-date.update");
