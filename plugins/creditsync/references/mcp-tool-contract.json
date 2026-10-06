@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 11.0.0; breaking changes require plugin 12.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 12.0.0; breaking changes require plugin 13.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -11,7 +11,7 @@
         "readOnlyHint": true,
         "title": "Borrower Search"
       },
-      "description": "Search accessible borrowers by canonical name or confirmed alias.",
+      "description": "Search accessible borrowers by canonical name or confirmed alias. Use: Use when the authorized workflow requires this capability: Search accessible borrowers by canonical name or confirmed alias. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -290,7 +290,7 @@
         "readOnlyHint": true,
         "title": "Borrower Portfolio"
       },
-      "description": "Get one accessible borrower portfolio by public UUID.",
+      "description": "Get one accessible borrower portfolio by public UUID. Use: Use when the authorized workflow requires this capability: Get one accessible borrower portfolio by public UUID. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -833,7 +833,7 @@
         "readOnlyHint": true,
         "title": "Borrower Resolve And Portfolio"
       },
-      "description": "Resolve one borrower without auto-selecting ambiguity and return a bounded portfolio.",
+      "description": "Resolve one borrower without auto-selecting ambiguity and return a bounded portfolio. Use: Use when the authorized workflow requires this capability: Resolve one borrower without auto-selecting ambiguity and return a bounded portfolio. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -1831,7 +1831,7 @@
         "readOnlyHint": false,
         "title": "Borrower Create"
       },
-      "description": "Create a borrower in the configured MCP tenant.",
+      "description": "Create a borrower in the configured MCP tenant. Use: Use when the authorized workflow requires this capability: Create a borrower in the configured MCP tenant. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -2167,7 +2167,7 @@
         "readOnlyHint": false,
         "title": "Borrower Update"
       },
-      "description": "Update an accessible borrower by public UUID.",
+      "description": "Update an accessible borrower by public UUID. Use: Use when the authorized workflow requires this capability: Update an accessible borrower by public UUID. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -2515,7 +2515,7 @@
         "readOnlyHint": false,
         "title": "Borrower Alias"
       },
-      "description": "Add, confirm, or deactivate a borrower alias.",
+      "description": "Add, confirm, or deactivate a borrower alias. Use: Use when the authorized workflow requires this capability: Add, confirm, or deactivate a borrower alias. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -2654,7 +2654,7 @@
         "readOnlyHint": true,
         "title": "Intake Get"
       },
-      "description": "Get a payment intake, evidence, and latest proposal.",
+      "description": "Get a payment intake, evidence, and latest proposal. Use: Use when the authorized workflow requires this capability: Get a payment intake, evidence, and latest proposal. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -3294,7 +3294,7 @@
         "readOnlyHint": true,
         "title": "Intake List"
       },
-      "description": "List accessible payment intakes, optionally by status.",
+      "description": "List accessible payment intakes, optionally by status. Use: Use when the authorized workflow requires this capability: List accessible payment intakes, optionally by status. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -3675,7 +3675,7 @@
         "readOnlyHint": true,
         "title": "Payment Batch Get"
       },
-      "description": "Inspect an atomic payment batch and its latest preview.",
+      "description": "Inspect an atomic payment batch and its latest preview. Use: Use when the authorized workflow requires this capability: Inspect an atomic payment batch and its latest preview. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -4050,7 +4050,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Stage"
       },
-      "description": "Create resumable payment-batch staging items without inventing amount or transfer time.",
+      "description": "Create resumable payment-batch staging items without inventing amount or transfer time. Use: Use when the authorized workflow requires this capability: Create resumable payment-batch staging items without inventing amount or transfer time. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -4213,7 +4213,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Staging Evidence Prepare"
       },
-      "description": "Prepare upload-first evidence for one resumable staging item.",
+      "description": "Prepare upload-first evidence for one resumable staging item. Use: Use when the authorized workflow requires this capability: Prepare upload-first evidence for one resumable staging item. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -4343,7 +4343,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Staging Evidence Finalize"
       },
-      "description": "Finalize upload-first evidence for one resumable staging item.",
+      "description": "Finalize upload-first evidence for one resumable staging item. Use: Use when the authorized workflow requires this capability: Finalize upload-first evidence for one resumable staging item. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -4426,7 +4426,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Staging Extract"
       },
-      "description": "Extract review-only payment-slip candidates from finalized staging evidence using the local OCR pipeline.",
+      "description": "Extract review-only payment-slip candidates from finalized staging evidence using the local OCR pipeline. Use: Use when the authorized workflow requires this capability: Extract review-only payment-slip candidates from finalized staging evidence using the local OCR pipeline. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -4620,7 +4620,7 @@
         "readOnlyHint": true,
         "title": "Payment Batch Workspace"
       },
-      "description": "Inspect resumable batch staging metadata and public evidence status.",
+      "description": "Inspect resumable batch staging metadata and public evidence status. Use: Use when the authorized workflow requires this capability: Inspect resumable batch staging metadata and public evidence status. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -5202,7 +5202,7 @@
         "readOnlyHint": true,
         "title": "Payment Batch Candidates"
       },
-      "description": "Discover accessible named borrowers and backend-calculated contract candidates for one reviewed staging slip.",
+      "description": "Discover accessible named borrowers and backend-calculated contract candidates for one reviewed staging slip. Use: Use when the authorized workflow requires this capability: Discover accessible named borrowers and backend-calculated contract candidates for one reviewed staging slip. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -5634,7 +5634,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Staging Review"
       },
-      "description": "Review one staged payment item and create its linked intake.",
+      "description": "Review one staged payment item and create its linked intake. Use: Use when the authorized workflow requires this capability: Review one staged payment item and create its linked intake. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -5775,7 +5775,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Staging Edit"
       },
-      "description": "Edit one unposted staged payment item with revision and reason guards.",
+      "description": "Edit one unposted staged payment item with revision and reason guards. Use: Use when the authorized workflow requires this capability: Edit one unposted staged payment item with revision and reason guards. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -5909,7 +5909,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Split"
       },
-      "description": "Move selected unposted batch membership atomically into a new batch.",
+      "description": "Move selected unposted batch membership atomically into a new batch. Use: Use when the authorized workflow requires this capability: Move selected unposted batch membership atomically into a new batch. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -6015,7 +6015,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Decision"
       },
-      "description": "Record a revision-bound chronology review decision for a batch.",
+      "description": "Record a revision-bound chronology review decision for a batch. Use: Use when the authorized workflow requires this capability: Record a revision-bound chronology review decision for a batch. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -6145,7 +6145,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Cancel"
       },
-      "description": "Cancel an unposted batch with a revision-bound idempotent command.",
+      "description": "Cancel an unposted batch with a revision-bound idempotent command. Use: Use when the authorized workflow requires this capability: Cancel an unposted batch with a revision-bound idempotent command. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -6580,7 +6580,7 @@
         "readOnlyHint": false,
         "title": "Intake Create"
       },
-      "description": "Create an idempotent payment intake from supplied payment data.",
+      "description": "Create an idempotent payment intake from supplied payment data. Use: Use when the authorized workflow requires this capability: Create an idempotent payment intake from supplied payment data. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -7073,7 +7073,7 @@
         "readOnlyHint": false,
         "title": "Evidence Prepare"
       },
-      "description": "Prepare a signed upload for payment evidence.",
+      "description": "Prepare a signed upload for payment evidence. Use: Use when the authorized workflow requires this capability: Prepare a signed upload for payment evidence. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -7225,7 +7225,7 @@
         "readOnlyHint": false,
         "title": "Evidence Finalize"
       },
-      "description": "Verify and finalize uploaded payment evidence.",
+      "description": "Verify and finalize uploaded payment evidence. Use: Use when the authorized workflow requires this capability: Verify and finalize uploaded payment evidence. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -7326,7 +7326,7 @@
         "readOnlyHint": false,
         "title": "Evidence Import Chatgpt File"
       },
-      "description": "Import one attached ChatGPT file as verified payment evidence.",
+      "description": "Import one attached ChatGPT file as verified payment evidence. Use: Use when the authorized workflow requires this capability: Import one attached ChatGPT file as verified payment evidence. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -7470,7 +7470,7 @@
         "readOnlyHint": false,
         "title": "Loan Disbursement Evidence Import Chatgpt File"
       },
-      "description": "Import one attached ChatGPT file as ready evidence for an exact loan disbursement draft.",
+      "description": "Import one attached ChatGPT file as ready evidence for an exact loan disbursement draft. Use: Use when the authorized workflow requires this capability: Import one attached ChatGPT file as ready evidence for an exact loan disbursement draft. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -7597,7 +7597,7 @@
         "readOnlyHint": false,
         "title": "Payment Evidence Supplement Import Chatgpt File"
       },
-      "description": "Import one attached ChatGPT file as ready supplemental evidence for an exact posted payment.",
+      "description": "Import one attached ChatGPT file as ready supplemental evidence for an exact posted payment. Use: Use when the authorized workflow requires this capability: Import one attached ChatGPT file as ready supplemental evidence for an exact posted payment. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -7736,7 +7736,7 @@
         "readOnlyHint": false,
         "title": "Payment Evidence Supplement Record"
       },
-      "description": "Record ready supplemental evidence after explicit operator confirmation.",
+      "description": "Record ready supplemental evidence after explicit operator confirmation. Use: Use when the authorized workflow requires this capability: Record ready supplemental evidence after explicit operator confirmation. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -7876,7 +7876,7 @@
         "readOnlyHint": false,
         "title": "Payment Preview"
       },
-      "description": "Preview and persist a versioned payment match proposal.",
+      "description": "Preview and persist a versioned payment match proposal. Use: Use when the authorized workflow requires this capability: Preview and persist a versioned payment match proposal. Effects: Persists a payment.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -8072,7 +8072,7 @@
         "readOnlyHint": false,
         "title": "Payment Cancel"
       },
-      "description": "Cancel an authorized unposted payment intake with an immutable receipt.",
+      "description": "Cancel an authorized unposted payment intake with an immutable receipt. Use: Use when the authorized workflow requires this capability: Cancel an authorized unposted payment intake with an immutable receipt. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -8178,7 +8178,7 @@
         "readOnlyHint": true,
         "title": "Payment Replacement Inspect"
       },
-      "description": "Inspect whether an accessible cancelled payment can receive one append-only replacement draft.",
+      "description": "Inspect whether an accessible cancelled payment can receive one append-only replacement draft. Use: Use when the authorized workflow requires this capability: Inspect whether an accessible cancelled payment can receive one append-only replacement draft. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -8324,7 +8324,7 @@
         "readOnlyHint": false,
         "title": "Payment Replacement Create"
       },
-      "description": "Create one audited draft replacement for an eligible cancelled payment without posting money.",
+      "description": "Create one audited draft replacement for an eligible cancelled payment without posting money. Use: Use when the authorized workflow requires this capability: Create one audited draft replacement for an eligible cancelled payment without posting money. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -8442,7 +8442,7 @@
         "readOnlyHint": false,
         "title": "Payment Replacement Duplicate Review Preview"
       },
-      "description": "Preview and durably record an exact, tenant-scoped human review for cancelled semantic payment duplicates without changing money.",
+      "description": "Preview and durably record an exact, tenant-scoped human review for cancelled semantic payment duplicates without changing money. Use: Use when the authorized workflow requires this capability: Preview and durably record an exact, tenant-scoped human review for cancelled semantic payment duplicates without changing money. Effects: Persists a payment.replacement.duplicate-review.preview review artifact; it does not perform the later financial execution. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -8598,7 +8598,7 @@
         "readOnlyHint": false,
         "title": "Payment Replacement Duplicate Review Execute"
       },
-      "description": "Execute a confirmed, fresh, idempotent duplicate review that authorizes only its exact cancelled candidates for replacement lineage.",
+      "description": "Execute a confirmed, fresh, idempotent duplicate review that authorizes only its exact cancelled candidates for replacement lineage. Use: Use when the authorized workflow requires this capability: Execute a confirmed, fresh, idempotent duplicate review that authorizes only its exact cancelled candidates for replacement lineage. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -8715,7 +8715,7 @@
         "readOnlyHint": false,
         "title": "Payment Identity Decision Preview"
       },
-      "description": "Preview and audit an exact participant-scoped same-payment or distinct-payment identity decision.",
+      "description": "Preview and audit an exact participant-scoped same-payment or distinct-payment identity decision. Use: Use when the authorized workflow requires this capability: Preview and audit an exact participant-scoped same-payment or distinct-payment identity decision. Effects: Persists a payment.identity-decision.preview review artifact; it does not perform the later financial execution. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -8890,7 +8890,7 @@
         "readOnlyHint": false,
         "title": "Payment Identity Decision Execute"
       },
-      "description": "Execute a confirmed identity decision after snapshot and evidence revalidation.",
+      "description": "Execute a confirmed identity decision after snapshot and evidence revalidation. Use: Use when the authorized workflow requires this capability: Execute a confirmed identity decision after snapshot and evidence revalidation. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -9004,7 +9004,7 @@
         "readOnlyHint": false,
         "title": "Payment Evidence Recovery Preview"
       },
-      "description": "Preview an explicit evidence recovery successor while preserving the source requirement floor and provenance.",
+      "description": "Preview an explicit evidence recovery successor while preserving the source requirement floor and provenance. Use: Use when the authorized workflow requires this capability: Preview an explicit evidence recovery successor while preserving the source requirement floor and provenance. Effects: Persists a payment.evidence-recovery.preview review artifact; it does not perform the later financial execution. Retry: Retry with the same idempotency key and identical arguments; inspect the existing preview before changing a request. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -9161,7 +9161,7 @@
         "readOnlyHint": false,
         "title": "Payment Evidence Recovery Execute"
       },
-      "description": "Execute a confirmed evidence recovery draft with immutable lineage and an idempotent receipt.",
+      "description": "Execute a confirmed evidence recovery draft with immutable lineage and an idempotent receipt. Use: Use when the authorized workflow requires this capability: Execute a confirmed evidence recovery draft with immutable lineage and an idempotent receipt. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -9292,7 +9292,7 @@
         "readOnlyHint": false,
         "title": "Payment Post"
       },
-      "description": "Post a ready payment proposal atomically.",
+      "description": "Post a ready payment proposal atomically. Use: Use when the authorized workflow requires this capability: Post a ready payment proposal atomically. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry the same operation with identical valid arguments; its input schema has no idempotency key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -9749,7 +9749,7 @@
         "readOnlyHint": false,
         "title": "Payment Reverse"
       },
-      "description": "Reverse a posted payment with compensating entries.",
+      "description": "Reverse a posted payment with compensating entries. Use: Use when the authorized workflow requires this capability: Reverse a posted payment with compensating entries. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry the same operation with identical valid arguments; its input schema has no idempotency key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -10205,7 +10205,7 @@
         "readOnlyHint": true,
         "title": "Payment Reverse With Accrual Preview"
       },
-      "description": "Preview reversing a floating-loan payment and materializing missing interest accruals through the original payment date.",
+      "description": "Preview reversing a floating-loan payment and materializing missing interest accruals through the original payment date. Use: Use when the authorized workflow requires this capability: Preview reversing a floating-loan payment and materializing missing interest accruals through the original payment date. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -10362,7 +10362,7 @@
         "readOnlyHint": false,
         "title": "Payment Reverse With Accrual Execute"
       },
-      "description": "Execute a confirmed atomic payment reversal with floating interest accrual materialization.",
+      "description": "Execute a confirmed atomic payment reversal with floating interest accrual materialization. Use: Use when the authorized workflow requires this capability: Execute a confirmed atomic payment reversal with floating interest accrual materialization. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -10873,7 +10873,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Create"
       },
-      "description": "Create an editable atomic payment batch.",
+      "description": "Create an editable atomic payment batch. Use: Use when the authorized workflow requires this capability: Create an editable atomic payment batch. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -11271,7 +11271,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Capture"
       },
-      "description": "Capture multiple payment intakes and batch items atomically.",
+      "description": "Capture multiple payment intakes and batch items atomically. Use: Use when the authorized workflow requires this capability: Capture multiple payment intakes and batch items atomically. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -11542,7 +11542,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Evidence Prepare Many"
       },
-      "description": "Prepare evidence for multiple payment batch items.",
+      "description": "Prepare evidence for multiple payment batch items. Use: Use when the authorized workflow requires this capability: Prepare evidence for multiple payment batch items. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -11750,7 +11750,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Evidence Finalize Many"
       },
-      "description": "Finalize evidence for multiple payment batch items.",
+      "description": "Finalize evidence for multiple payment batch items. Use: Use when the authorized workflow requires this capability: Finalize evidence for multiple payment batch items. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -11906,7 +11906,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Item Add"
       },
-      "description": "Add one payment intake to an atomic batch.",
+      "description": "Add one payment intake to an atomic batch. Use: Use when the authorized workflow requires this capability: Add one payment intake to an atomic batch. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -12293,7 +12293,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Evidence Prepare"
       },
-      "description": "Prepare evidence for a payment batch item.",
+      "description": "Prepare evidence for a payment batch item. Use: Use when the authorized workflow requires this capability: Prepare evidence for a payment batch item. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -12451,7 +12451,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Evidence Finalize"
       },
-      "description": "Finalize evidence for a payment batch item.",
+      "description": "Finalize evidence for a payment batch item. Use: Use when the authorized workflow requires this capability: Finalize evidence for a payment batch item. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -12553,7 +12553,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Preview"
       },
-      "description": "Preview the complete atomic payment batch allocation.",
+      "description": "Preview the complete atomic payment batch allocation. Use: Use when the authorized workflow requires this capability: Preview the complete atomic payment batch allocation. Effects: Persists a payment.batch.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -12960,7 +12960,7 @@
         "readOnlyHint": false,
         "title": "Payment Batch Execute"
       },
-      "description": "Execute one explicitly confirmed atomic payment batch.",
+      "description": "Execute one explicitly confirmed atomic payment batch. Use: Use when the authorized workflow requires this capability: Execute one explicitly confirmed atomic payment batch. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -13103,7 +13103,7 @@
         "readOnlyHint": false,
         "title": "Payment Reconcile Preview"
       },
-      "description": "Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal.",
+      "description": "Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal. Use: Use when the authorized workflow requires this capability: Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal. Effects: Persists a payment.reconcile.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -13493,7 +13493,7 @@
         "readOnlyHint": false,
         "title": "Payment Reconcile Reflow Preview"
       },
-      "description": "Preview an append-only temporal repair for an existing executed reconciliation with complete floating-interest provenance.",
+      "description": "Preview an append-only temporal repair for an existing executed reconciliation with complete floating-interest provenance. Use: Use when the authorized workflow requires this capability: Preview an append-only temporal repair for an existing executed reconciliation with complete floating-interest provenance. Effects: Persists a payment.reconcile.reflow.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -13733,7 +13733,7 @@
         "readOnlyHint": false,
         "title": "Payment Reconcile Reflow Execute"
       },
-      "description": "Execute a confirmed idempotent temporal repair for an existing reconciliation.",
+      "description": "Execute a confirmed idempotent temporal repair for an existing reconciliation. Use: Use when the authorized workflow requires this capability: Execute a confirmed idempotent temporal repair for an existing reconciliation. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -13871,7 +13871,7 @@
         "readOnlyHint": false,
         "title": "Payment Allocation Correction Preview"
       },
-      "description": "Preview moving one posted scheduled repayment to another installment of the same active loan with exact component conservation.",
+      "description": "Preview moving one posted scheduled repayment to another installment of the same active loan with exact component conservation. Use: Use when the authorized workflow requires this capability: Preview moving one posted scheduled repayment to another installment of the same active loan with exact component conservation. Effects: Persists a payment.allocation-correction.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -14257,7 +14257,7 @@
         "readOnlyHint": true,
         "title": "Payment Reconcile Preflight"
       },
-      "description": "Run a no-write execution feasibility check for an explicit payment reconciliation before confirmation.",
+      "description": "Run a no-write execution feasibility check for an explicit payment reconciliation before confirmation. Use: Use when the authorized workflow requires this capability: Run a no-write execution feasibility check for an explicit payment reconciliation before confirmation. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -14547,7 +14547,7 @@
         "readOnlyHint": false,
         "title": "Payment Reconcile Mark Review"
       },
-      "description": "Move an eligible ready backdated floating payment into reconciliation review after explicit confirmation.",
+      "description": "Move an eligible ready backdated floating payment into reconciliation review after explicit confirmation. Use: Use when the authorized workflow requires this capability: Move an eligible ready backdated floating payment into reconciliation review after explicit confirmation. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -14655,7 +14655,7 @@
         "readOnlyHint": false,
         "title": "Payment Reconcile Execute"
       },
-      "description": "Execute a confirmed, idempotent payment reconciliation with append-only provenance.",
+      "description": "Execute a confirmed, idempotent payment reconciliation with append-only provenance. Use: Use when the authorized workflow requires this capability: Execute a confirmed, idempotent payment reconciliation with append-only provenance. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -14803,7 +14803,7 @@
         "readOnlyHint": false,
         "title": "Payment Allocation Correction Execute"
       },
-      "description": "Execute a confirmed, idempotent append-only scheduled payment allocation correction.",
+      "description": "Execute a confirmed, idempotent append-only scheduled payment allocation correction. Use: Use when the authorized workflow requires this capability: Execute a confirmed, idempotent append-only scheduled payment allocation correction. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -14973,7 +14973,7 @@
         "readOnlyHint": false,
         "title": "Payment Restore Create"
       },
-      "description": "Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview.",
+      "description": "Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview. Use: Use when the authorized workflow requires this capability: Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -15079,7 +15079,7 @@
         "readOnlyHint": false,
         "title": "Payment Restore Evidence Prepare"
       },
-      "description": "Prepare a signed slip upload for one linked payment restore draft.",
+      "description": "Prepare a signed slip upload for one linked payment restore draft. Use: Use when the authorized workflow requires this capability: Prepare a signed slip upload for one linked payment restore draft. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -15242,7 +15242,7 @@
         "readOnlyHint": false,
         "title": "Payment Restore Evidence Finalize"
       },
-      "description": "Verify and finalize uploaded slip evidence for one linked payment restore draft.",
+      "description": "Verify and finalize uploaded slip evidence for one linked payment restore draft. Use: Use when the authorized workflow requires this capability: Verify and finalize uploaded slip evidence for one linked payment restore draft. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -15344,7 +15344,7 @@
         "readOnlyHint": false,
         "title": "Payment Restore Preview"
       },
-      "description": "Preview exact restoration of a fully reversed payment using its original principal and interest components.",
+      "description": "Preview exact restoration of a fully reversed payment using its original principal and interest components. Use: Use when the authorized workflow requires this capability: Preview exact restoration of a fully reversed payment using its original principal and interest components. Effects: Persists a payment.restore.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -15697,7 +15697,7 @@
         "readOnlyHint": false,
         "title": "Payment Restore Execute"
       },
-      "description": "Execute a confirmed, idempotent exact restoration of a reversed payment as a linked child intake.",
+      "description": "Execute a confirmed, idempotent exact restoration of a reversed payment as a linked child intake. Use: Use when the authorized workflow requires this capability: Execute a confirmed, idempotent exact restoration of a reversed payment as a linked child intake. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -15845,7 +15845,7 @@
         "readOnlyHint": false,
         "title": "Payment Restore Cancel"
       },
-      "description": "Cancel an eligible unposted restore draft with an immutable audited receipt without changing the reversed source or balances.",
+      "description": "Cancel an eligible unposted restore draft with an immutable audited receipt without changing the reversed source or balances. Use: Use when the authorized workflow requires this capability: Cancel an eligible unposted restore draft with an immutable audited receipt without changing the reversed source or balances. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -15967,7 +15967,7 @@
         "readOnlyHint": false,
         "title": "Payment Restore Schedule Backfill"
       },
-      "description": "Repair derived schedule aggregates for one verified posted exact-payment restore without creating a payment.",
+      "description": "Repair derived schedule aggregates for one verified posted exact-payment restore without creating a payment. Use: Use when the authorized workflow requires this capability: Repair derived schedule aggregates for one verified posted exact-payment restore without creating a payment. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -16073,7 +16073,7 @@
         "readOnlyHint": true,
         "title": "Loan Preview"
       },
-      "description": "Preview an exact loan schedule without persistence.",
+      "description": "Preview an exact loan schedule without persistence. Use: Use when the authorized workflow requires this capability: Preview an exact loan schedule without persistence. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -18068,12 +18068,12 @@
     {
       "annotations": {
         "destructiveHint": false,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "openWorldHint": false,
-        "readOnlyHint": true,
+        "readOnlyHint": false,
         "title": "Loan Cancel Preview"
       },
-      "description": "Preview cancellation of an active loan with no actual disbursement and no remaining posted payments.",
+      "description": "Persist a cancellation preview for an active loan with no actual disbursement and no remaining posted payments. Use: Use after inspecting the loan and before a separate cancellation execution. Effects: Persists a loan.cancel.preview review artifact; it does not perform the later financial execution. Retry: Not idempotent. Repeating creates another persisted preview; inspect history before retrying.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -18248,7 +18248,7 @@
         "readOnlyHint": false,
         "title": "Loan Draft"
       },
-      "description": "Create an editable loan draft.",
+      "description": "Create an editable loan draft. Use: Use when the authorized workflow requires this capability: Create an editable loan draft. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -19465,7 +19465,7 @@
         "readOnlyHint": false,
         "title": "Loan Draft Delete"
       },
-      "description": "Permanently delete an unactivated draft loan after dependency checks and audit logging.",
+      "description": "Permanently delete an unactivated draft loan after dependency checks and audit logging. Use: Use when the authorized workflow requires this capability: Permanently delete an unactivated draft loan after dependency checks and audit logging. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -19555,7 +19555,7 @@
         "readOnlyHint": false,
         "title": "Loan Activate"
       },
-      "description": "Activate a loan draft idempotently and create its schedule.",
+      "description": "Activate a loan draft idempotently and create its schedule. Use: Use when the authorized workflow requires this capability: Activate a loan draft idempotently and create its schedule. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -20402,7 +20402,7 @@
         "readOnlyHint": true,
         "title": "Loan Interest Rate List"
       },
-      "description": "List the effective-dated floating-interest timeline and current exact daily interest.",
+      "description": "List the effective-dated floating-interest timeline and current exact daily interest. Use: Use when the authorized workflow requires this capability: List the effective-dated floating-interest timeline and current exact daily interest. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -20649,7 +20649,7 @@
         "readOnlyHint": false,
         "title": "Loan Interest Rate Preview"
       },
-      "description": "Preview an effective-dated floating-interest change and automatic timeline split.",
+      "description": "Preview an effective-dated floating-interest change and automatic timeline split. Use: Use when the authorized workflow requires this capability: Preview an effective-dated floating-interest change and automatic timeline split. Effects: Persists a loan.interest-rate.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -20930,7 +20930,7 @@
         "readOnlyHint": false,
         "title": "Loan Interest Rate Execute"
       },
-      "description": "Execute an explicitly confirmed floating-interest preview idempotently.",
+      "description": "Execute an explicitly confirmed floating-interest preview idempotently. Use: Use when the authorized workflow requires this capability: Execute an explicitly confirmed floating-interest preview idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -21233,7 +21233,7 @@
         "readOnlyHint": false,
         "title": "Loan Settlement Preview"
       },
-      "description": "Preview and persist an exact floating-loan close-out composition.",
+      "description": "Preview and persist an exact floating-loan close-out composition. Use: Use when the authorized workflow requires this capability: Preview and persist an exact floating-loan close-out composition. Effects: Persists a loan.settlement.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -21410,7 +21410,7 @@
         "readOnlyHint": false,
         "title": "Loan Settlement Execute"
       },
-      "description": "Execute an explicitly confirmed floating-loan close-out idempotently.",
+      "description": "Execute an explicitly confirmed floating-loan close-out idempotently. Use: Use when the authorized workflow requires this capability: Execute an explicitly confirmed floating-loan close-out idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -21706,7 +21706,7 @@
         "readOnlyHint": false,
         "title": "Loan Settlement Reverse"
       },
-      "description": "Reverse an executed floating-loan settlement through exact append-only compensation.",
+      "description": "Reverse an executed floating-loan settlement through exact append-only compensation. Use: Use when the authorized workflow requires this capability: Reverse an executed floating-loan settlement through exact append-only compensation. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -21886,7 +21886,7 @@
         "readOnlyHint": false,
         "title": "Loan Cancel Execute"
       },
-      "description": "Execute an explicitly confirmed unfunded-loan cancellation idempotently.",
+      "description": "Execute an explicitly confirmed unfunded-loan cancellation idempotently. Use: Use when the authorized workflow requires this capability: Execute an explicitly confirmed unfunded-loan cancellation idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -22777,7 +22777,7 @@
         "readOnlyHint": false,
         "title": "Loan Replacement Preview"
       },
-      "description": "Preview an atomic scheduled-loan replacement from an active loan into an existing funded draft.",
+      "description": "Preview an atomic scheduled-loan replacement from an active loan into an existing funded draft. Use: Use when the authorized workflow requires this capability: Preview an atomic scheduled-loan replacement from an active loan into an existing funded draft. Effects: Persists a loan.replacement.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -23253,7 +23253,7 @@
         "readOnlyHint": false,
         "title": "Loan Replacement Execute"
       },
-      "description": "Execute an explicitly confirmed fresh atomic loan replacement idempotently.",
+      "description": "Execute an explicitly confirmed fresh atomic loan replacement idempotently. Use: Use when the authorized workflow requires this capability: Execute an explicitly confirmed fresh atomic loan replacement idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -23386,7 +23386,7 @@
         "readOnlyHint": false,
         "title": "Loan Replacement Reverse"
       },
-      "description": "Reverse an executed loan replacement only when authoritative downstream checks allow compensation.",
+      "description": "Reverse an executed loan replacement only when authoritative downstream checks allow compensation. Use: Use when the authorized workflow requires this capability: Reverse an executed loan replacement only when authoritative downstream checks allow compensation. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -23504,7 +23504,7 @@
         "readOnlyHint": true,
         "title": "Loan Disbursement List"
       },
-      "description": "List actual loan disbursement events and variance read-only.",
+      "description": "List actual loan disbursement events and variance read-only. Use: Use when the authorized workflow requires this capability: List actual loan disbursement events and variance read-only. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -23745,7 +23745,7 @@
         "readOnlyHint": true,
         "title": "Loan Contract Get"
       },
-      "description": "Get complete accessible loan terms and repayment schedule read-only.",
+      "description": "Get complete accessible loan terms and repayment schedule read-only. Use: Use when the authorized workflow requires this capability: Get complete accessible loan terms and repayment schedule read-only. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -24744,7 +24744,7 @@
         "readOnlyHint": true,
         "title": "Loan Inspect Context"
       },
-      "description": "Inspect one accessible loan with a bounded summary, schedule, or payment-history view.",
+      "description": "Inspect one accessible loan with a bounded summary, schedule, or payment-history view. Use: Use when the authorized workflow requires this capability: Inspect one accessible loan with a bounded summary, schedule, or payment-history view. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -26579,7 +26579,7 @@
         "readOnlyHint": false,
         "title": "Loan Payment Start Date Update"
       },
-      "description": "Change the first repayment date while preserving posted payment history and auditing schedule amendments.",
+      "description": "Change the first repayment date while preserving posted payment history and auditing schedule amendments. Use: Use only after reviewing the date amendment and obtaining explicit human confirmation. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -27445,13 +27445,173 @@
     },
     {
       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Loan Schedule Defer"
+      },
+      "description": "Defer one fully unpaid installment to the day after the current schedule tail without recording a payment. Use: Use only after authoritative inspection of the exact active scheduled loan and selected installment. Effects: Marks the source installment deferred and appends one replacement schedule installment and an audit record. Retry: Retry only with the identical idempotency key and payload; a changed request under the same key conflicts. Requires explicit human confirmation through the workflow before execution.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "const": true,
+            "type": "boolean"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "loanPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schedulePublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loanPublicId",
+          "schedulePublicId",
+          "reason",
+          "idempotencyKey",
+          "confirmed"
+        ],
+        "type": "object"
+      },
+      "name": "loan.schedule.defer",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "auditPublicIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "correlationId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "auditPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "correlationId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "loanPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "replacementDueDate": {
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                "type": "string"
+              },
+              "replacementInstallmentNo": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "replacementSchedulePublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "scheduledFee": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "scheduledInterest": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "scheduledPrincipal": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "scheduledTotal": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "sourceSchedulePublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "sourceStatus": {
+                "const": "deferred",
+                "type": "string"
+              }
+            },
+            "required": [
+              "loanPublicId",
+              "sourceSchedulePublicId",
+              "replacementSchedulePublicId",
+              "sourceStatus",
+              "replacementInstallmentNo",
+              "replacementDueDate",
+              "scheduledPrincipal",
+              "scheduledInterest",
+              "scheduledFee",
+              "scheduledTotal",
+              "auditPublicId",
+              "correlationId"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data",
+          "correlationId",
+          "auditPublicIds"
+        ],
+        "type": "object"
+      },
+      "title": "Loan Schedule Defer"
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
         "title": "Loan Payment History List"
       },
-      "description": "List payment intakes and posted components for one accessible loan read-only.",
+      "description": "List payment intakes and posted components for one accessible loan read-only. Use: Use when the authorized workflow requires this capability: List payment intakes and posted components for one accessible loan read-only. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -27916,7 +28076,7 @@
         "readOnlyHint": true,
         "title": "Payment Match Context"
       },
-      "description": "Get a bounded, read-only payment matching context with borrower candidates and linked loan context.",
+      "description": "Get a bounded, read-only payment matching context with borrower candidates and linked loan context. Use: Use when the authorized workflow requires this capability: Get a bounded, read-only payment matching context with borrower candidates and linked loan context. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -30699,7 +30859,7 @@
         "readOnlyHint": false,
         "title": "Loan Disbursement Draft"
       },
-      "description": "Create an editable actual loan disbursement draft.",
+      "description": "Create an editable actual loan disbursement draft. Use: Use when the authorized workflow requires this capability: Create an editable actual loan disbursement draft. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -30970,7 +31130,7 @@
         "readOnlyHint": false,
         "title": "Loan Disbursement Update"
       },
-      "description": "Update supplied fields on an editable actual loan disbursement draft.",
+      "description": "Update supplied fields on an editable actual loan disbursement draft. Use: Use when the authorized workflow requires this capability: Update supplied fields on an editable actual loan disbursement draft. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -31221,7 +31381,7 @@
         "readOnlyHint": false,
         "title": "Loan Disbursement Evidence Prepare"
       },
-      "description": "Prepare a signed upload for loan disbursement evidence.",
+      "description": "Prepare a signed upload for loan disbursement evidence. Use: Use when the authorized workflow requires this capability: Prepare a signed upload for loan disbursement evidence. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -31355,7 +31515,7 @@
         "readOnlyHint": false,
         "title": "Loan Disbursement Evidence Finalize"
       },
-      "description": "Verify and finalize loan disbursement evidence.",
+      "description": "Verify and finalize loan disbursement evidence. Use: Use when the authorized workflow requires this capability: Verify and finalize loan disbursement evidence. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -31464,7 +31624,7 @@
         "readOnlyHint": false,
         "title": "Loan Disbursement Post"
       },
-      "description": "Post an actual loan disbursement idempotently.",
+      "description": "Post an actual loan disbursement idempotently. Use: Use when the authorized workflow requires this capability: Post an actual loan disbursement idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -31696,7 +31856,7 @@
         "readOnlyHint": false,
         "title": "Loan Disbursement Reverse"
       },
-      "description": "Reverse a posted loan disbursement with a reason.",
+      "description": "Reverse a posted loan disbursement with a reason. Use: Use when the authorized workflow requires this capability: Reverse a posted loan disbursement with a reason. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -31940,7 +32100,7 @@
         "readOnlyHint": true,
         "title": "Loan Commission Participant List"
       },
-      "description": "List current effective-dated commission participants for an accessible loan.",
+      "description": "List current effective-dated commission participants for an accessible loan. Use: Use when the authorized workflow requires this capability: List current effective-dated commission participants for an accessible loan. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -32101,7 +32261,7 @@
         "readOnlyHint": false,
         "title": "Loan Commission Participant Add"
       },
-      "description": "Add a confirmed effective-dated commission participant idempotently.",
+      "description": "Add a confirmed effective-dated commission participant idempotently. Use: Use when the authorized workflow requires this capability: Add a confirmed effective-dated commission participant idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -32312,7 +32472,7 @@
         "readOnlyHint": false,
         "title": "Loan Commission Participant Update"
       },
-      "description": "End the current participant version and append a confirmed replacement version.",
+      "description": "End the current participant version and append a confirmed replacement version. Use: Use when the authorized workflow requires this capability: End the current participant version and append a confirmed replacement version. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -32517,7 +32677,7 @@
         "readOnlyHint": false,
         "title": "Loan Commission Participant End"
       },
-      "description": "End a commission participant through a confirmed immutable successor version.",
+      "description": "End a commission participant through a confirmed immutable successor version. Use: Use when the authorized workflow requires this capability: End a commission participant through a confirmed immutable successor version. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -32705,7 +32865,7 @@
         "readOnlyHint": true,
         "title": "Loan Commission Preview"
       },
-      "description": "Preview exact commission derived only from posted payment interest components.",
+      "description": "Preview exact commission derived only from posted payment interest components. Use: Use when the authorized workflow requires this capability: Preview exact commission derived only from posted payment interest components. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -32830,7 +32990,7 @@
         "readOnlyHint": true,
         "title": "Loan Commission List"
       },
-      "description": "List exact derived commission for supplied posted payment public UUIDs.",
+      "description": "List exact derived commission for supplied posted payment public UUIDs. Use: Use when the authorized workflow requires this capability: List exact derived commission for supplied posted payment public UUIDs. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -32955,7 +33115,7 @@
         "readOnlyHint": true,
         "title": "Loan Commission Calculate"
       },
-      "description": "Calculate exact derived commission for supplied posted payment public UUIDs.",
+      "description": "Calculate exact derived commission for supplied posted payment public UUIDs. Use: Use when the authorized workflow requires this capability: Calculate exact derived commission for supplied posted payment public UUIDs. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -33080,7 +33240,7 @@
         "readOnlyHint": true,
         "title": "Loan Commission Reverse"
       },
-      "description": "Preview the exact compensating commission effect of supplied posted reversal payments read-only; this never writes financial records or returns audit identifiers.",
+      "description": "Preview the exact compensating commission effect of supplied posted reversal payments read-only; this never writes financial records or returns audit identifiers. Use: Use when the authorized workflow requires this capability: Preview the exact compensating commission effect of supplied posted reversal payments read-only; this never writes financial records or returns audit identifiers. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -33205,7 +33365,7 @@
         "readOnlyHint": false,
         "title": "Payment Intermediary Attribution Create"
       },
-      "description": "Create a confirmed exact payment-source attribution idempotently.",
+      "description": "Create a confirmed exact payment-source attribution idempotently. Use: Use only after exact source attribution is reviewed and confirmed. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -33400,7 +33560,7 @@
         "readOnlyHint": true,
         "title": "Payment Intermediary Attribution List"
       },
-      "description": "List append-only payment-source attribution entries for one accessible payment.",
+      "description": "List append-only payment-source attribution entries for one accessible payment. Use: Use when the authorized workflow requires this capability: List append-only payment-source attribution entries for one accessible payment. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -33556,7 +33716,7 @@
         "readOnlyHint": false,
         "title": "Payment Intermediary Attribution Reverse"
       },
-      "description": "Create a confirmed reasoned compensating attribution idempotently.",
+      "description": "Create a confirmed reasoned compensating attribution idempotently. Use: Use when the authorized workflow requires this capability: Create a confirmed reasoned compensating attribution idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -33733,7 +33893,7 @@
         "readOnlyHint": true,
         "title": "Intermediary Search"
       },
-      "description": "Search active intermediaries before creating a new record.",
+      "description": "Search active intermediaries before creating a new record. Use: Use when the authorized workflow requires this capability: Search active intermediaries before creating a new record. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -33839,7 +33999,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Create"
       },
-      "description": "Create an intermediary after canonical-name review.",
+      "description": "Create an intermediary after canonical-name review. Use: Use when the authorized workflow requires this capability: Create an intermediary after canonical-name review. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -33952,7 +34112,7 @@
         "readOnlyHint": true,
         "title": "Intermediary Profile Get"
       },
-      "description": "Inspect one intermediary profile, masked bank accounts, and assignment history.",
+      "description": "Inspect one intermediary profile, masked bank accounts, and assignment history. Use: Use when the authorized workflow requires this capability: Inspect one intermediary profile, masked bank accounts, and assignment history. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -34228,7 +34388,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Bank Account Save"
       },
-      "description": "Save an intermediary bank account and return only its masked public form.",
+      "description": "Save an intermediary bank account and return only its masked public form. Use: Use when the authorized workflow requires this capability: Save an intermediary bank account and return only its masked public form. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -34386,7 +34546,7 @@
         "readOnlyHint": true,
         "title": "Intermediary Managed Loan List"
       },
-      "description": "List active loans managed by an intermediary through effective assignments.",
+      "description": "List active loans managed by an intermediary through effective assignments. Use: Use when the authorized workflow requires this capability: List active loans managed by an intermediary through effective assignments. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -34663,7 +34823,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Assignment Create"
       },
-      "description": "Create an idempotent effective-dated loan intermediary assignment.",
+      "description": "Create an idempotent effective-dated loan intermediary assignment. Use: Use when the authorized workflow requires this capability: Create an idempotent effective-dated loan intermediary assignment. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -34865,7 +35025,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Assignment End"
       },
-      "description": "End an intermediary assignment without deleting its history.",
+      "description": "End an intermediary assignment without deleting its history. Use: Use when the authorized workflow requires this capability: End an intermediary assignment without deleting its history. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -35052,7 +35212,7 @@
         "readOnlyHint": true,
         "title": "Intermediary Disbursement List"
       },
-      "description": "List intermediated disbursement groups by public filters.",
+      "description": "List intermediated disbursement groups by public filters. Use: Use when the authorized workflow requires this capability: List intermediated disbursement groups by public filters. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -35413,7 +35573,7 @@
         "readOnlyHint": true,
         "title": "Intermediary Disbursement Get"
       },
-      "description": "Inspect one intermediated group, its transfer events, and latest reconciliation preview.",
+      "description": "Inspect one intermediated group, its transfer events, and latest reconciliation preview. Use: Use when the authorized workflow requires this capability: Inspect one intermediated group, its transfer events, and latest reconciliation preview. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -35885,7 +36045,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Disbursement Create"
       },
-      "description": "Create an exact intermediated disbursement group from persisted loan activation terms.",
+      "description": "Create an exact intermediated disbursement group from persisted loan activation terms. Use: Use when the authorized workflow requires this capability: Create an exact intermediated disbursement group from persisted loan activation terms. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -36052,7 +36212,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Disbursement Event Create"
       },
-      "description": "Create one immutable-ready cash transfer event within an intermediated group.",
+      "description": "Create one immutable-ready cash transfer event within an intermediated group. Use: Use when the authorized workflow requires this capability: Create one immutable-ready cash transfer event within an intermediated group. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -36339,7 +36499,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Disbursement Evidence Prepare"
       },
-      "description": "Prepare a signed upload for one transfer-event evidence item.",
+      "description": "Prepare a signed upload for one transfer-event evidence item. Use: Use when the authorized workflow requires this capability: Prepare a signed upload for one transfer-event evidence item. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -36526,7 +36686,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Disbursement Evidence Finalize"
       },
-      "description": "Verify and finalize one transfer-event evidence item.",
+      "description": "Verify and finalize one transfer-event evidence item. Use: Use when the authorized workflow requires this capability: Verify and finalize one transfer-event evidence item. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -36670,7 +36830,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Disbursement Preview"
       },
-      "description": "Persist an exact role-total, evidence-readiness, retained-balance, and variance preview.",
+      "description": "Persist an exact role-total, evidence-readiness, retained-balance, and variance preview. Use: Use when the authorized workflow requires this capability: Persist an exact role-total, evidence-readiness, retained-balance, and variance preview. Effects: Persists a intermediary.disbursement.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -36851,7 +37011,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Disbursement Post"
       },
-      "description": "Atomically post an exact balanced intermediated group after explicit confirmation.",
+      "description": "Atomically post an exact balanced intermediated group after explicit confirmation. Use: Use when the authorized workflow requires this capability: Atomically post an exact balanced intermediated group after explicit confirmation. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37078,7 +37238,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Disbursement Reverse"
       },
-      "description": "Create a reasoned compensating reversal for one posted intermediated group.",
+      "description": "Create a reasoned compensating reversal for one posted intermediated group. Use: Use when the authorized workflow requires this capability: Create a reasoned compensating reversal for one posted intermediated group. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37342,7 +37502,7 @@
         "readOnlyHint": true,
         "title": "Intermediary Collection List"
       },
-      "description": "List borrower payments held by an intermediary.",
+      "description": "List borrower payments held by an intermediary. Use: Use when the authorized workflow requires this capability: List borrower payments held by an intermediary. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37403,7 +37563,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Collection Create"
       },
-      "description": "Record a borrower payment held by an intermediary without posting cash receipt twice.",
+      "description": "Record a borrower payment held by an intermediary without posting cash receipt twice. Use: Use when the authorized workflow requires this capability: Record a borrower payment held by an intermediary without posting cash receipt twice. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37516,7 +37676,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Collection Cancel"
       },
-      "description": "Cancel an exact unposted intermediary collection with a current state hash and audit receipt.",
+      "description": "Cancel an exact unposted intermediary collection with a current state hash and audit receipt. Use: Use when the authorized workflow requires this capability: Cancel an exact unposted intermediary collection with a current state hash and audit receipt. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37598,7 +37758,7 @@
         "readOnlyHint": true,
         "title": "Intermediary Remittance Get"
       },
-      "description": "Inspect a remittance, allocations, and exact remaining balance.",
+      "description": "Inspect a remittance, allocations, and exact remaining balance. Use: Use when the authorized workflow requires this capability: Inspect a remittance, allocations, and exact remaining balance. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37647,7 +37807,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Remittance Create"
       },
-      "description": "Create an idempotent intermediary remittance draft.",
+      "description": "Create an idempotent intermediary remittance draft. Use: Use when the authorized workflow requires this capability: Create an idempotent intermediary remittance draft. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37747,7 +37907,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Remittance Allocations Save"
       },
-      "description": "Select exact intermediary collections for a remittance.",
+      "description": "Select exact intermediary collections for a remittance. Use: Use when the authorized workflow requires this capability: Select exact intermediary collections for a remittance. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37806,7 +37966,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Remittance Preview"
       },
-      "description": "Preview the exact remittance reconciliation before posting.",
+      "description": "Preview the exact remittance reconciliation before posting. Use: Use when the authorized workflow requires this capability: Preview the exact remittance reconciliation before posting. Effects: Persists a intermediary.remittance.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37855,7 +38015,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Remittance Evidence Prepare"
       },
-      "description": "Prepare a signed upload for remittance-slip evidence.",
+      "description": "Prepare a signed upload for remittance-slip evidence. Use: Use when the authorized workflow requires this capability: Prepare a signed upload for remittance-slip evidence. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37935,7 +38095,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Remittance Evidence Finalize"
       },
-      "description": "Verify and finalize remittance-slip evidence.",
+      "description": "Verify and finalize remittance-slip evidence. Use: Use when the authorized workflow requires this capability: Verify and finalize remittance-slip evidence. Effects: Changes evidence preparation or readiness state; it does not imply that a financial record is posted. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -37990,7 +38150,7 @@
         "readOnlyHint": false,
         "title": "Intermediary Remittance Post"
       },
-      "description": "Post a balanced, explicitly confirmed intermediary remittance.",
+      "description": "Post a balanced, explicitly confirmed intermediary remittance. Use: Use when the authorized workflow requires this capability: Post a balanced, explicitly confirmed intermediary remittance. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -38072,7 +38232,7 @@
         "readOnlyHint": false,
         "title": "Renewal Preview"
       },
-      "description": "Preview a daily-loan renewal with backend-authoritative full-contract-interest composition by default.",
+      "description": "Preview a daily-loan renewal with backend-authoritative full-contract-interest composition by default. Use: Use when the authorized workflow requires this capability: Preview a daily-loan renewal with backend-authoritative full-contract-interest composition by default. Effects: Persists a renewal.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -38641,7 +38801,7 @@
         "readOnlyHint": false,
         "title": "Renewal Execute"
       },
-      "description": "Execute an unchanged confirmed renewal idempotently, with explicit collection acknowledgement when required.",
+      "description": "Execute an unchanged confirmed renewal idempotently, with explicit collection acknowledgement when required. Use: Use when the authorized workflow requires this capability: Execute an unchanged confirmed renewal idempotently, with explicit collection acknowledgement when required. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -39179,7 +39339,7 @@
         "readOnlyHint": false,
         "title": "Renewal Reverse"
       },
-      "description": "Reverse an executed renewal with compensating records.",
+      "description": "Reverse an executed renewal with compensating records. Use: Use when the authorized workflow requires this capability: Reverse an executed renewal with compensating records. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -39703,7 +39863,7 @@
         "readOnlyHint": false,
         "title": "Loan Restructure Preview"
       },
-      "description": "Preview an exact single-payment or floating-loan settlement and replacement contract from current balances.",
+      "description": "Preview an exact single-payment or floating-loan settlement and replacement contract from current balances. Use: Use when the authorized workflow requires this capability: Preview an exact single-payment or floating-loan settlement and replacement contract from current balances. Effects: Persists a loan.restructure.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -41218,7 +41378,7 @@
         "readOnlyHint": false,
         "title": "Loan Restructure Execute"
       },
-      "description": "Execute an explicitly confirmed restructure preview idempotently.",
+      "description": "Execute an explicitly confirmed restructure preview idempotently. Use: Use when the authorized workflow requires this capability: Execute an explicitly confirmed restructure preview idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -41368,7 +41528,7 @@
         "readOnlyHint": false,
         "title": "Loan Restructure Reverse"
       },
-      "description": "Reverse an executed restructure when the authoritative downstream checks allow it.",
+      "description": "Reverse an executed restructure when the authoritative downstream checks allow it. Use: Use when the authorized workflow requires this capability: Reverse an executed restructure when the authoritative downstream checks allow it. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -41503,7 +41663,7 @@
         "readOnlyHint": false,
         "title": "Loan Waiver Preview"
       },
-      "description": "Preview an interest, fee, or penalty waiver against the current replacement-loan balance.",
+      "description": "Preview an interest, fee, or penalty waiver against the current replacement-loan balance. Use: Use when the authorized workflow requires this capability: Preview an interest, fee, or penalty waiver against the current replacement-loan balance. Effects: Persists a loan.waiver.preview review artifact; it does not perform the later financial execution. Retry: Do not blindly retry; inspect the current state and follow the operation's explicit recovery path.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -41639,7 +41799,7 @@
         "readOnlyHint": false,
         "title": "Loan Waiver Execute"
       },
-      "description": "Execute an explicitly confirmed component waiver preview idempotently.",
+      "description": "Execute an explicitly confirmed component waiver preview idempotently. Use: Use when the authorized workflow requires this capability: Execute an explicitly confirmed component waiver preview idempotently. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -41796,7 +41956,7 @@
         "readOnlyHint": false,
         "title": "Loan Waiver Reverse"
       },
-      "description": "Reverse an executed component waiver with a compensating record.",
+      "description": "Reverse an executed component waiver with a compensating record. Use: Use when the authorized workflow requires this capability: Reverse an executed component waiver with a compensating record. Effects: Changes tenant-scoped application state according to the authoritative service; financial tools may append immutable records. Retry: Safe to retry with the same idempotency key after checking the returned state; never change payload under a reused key. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -41938,7 +42098,7 @@
         "readOnlyHint": true,
         "title": "Funding Source List"
       },
-      "description": "List tenant funding profiles and drawdowns read-only.",
+      "description": "List tenant funding profiles and drawdowns read-only. Use: Use when the authorized workflow requires this capability: List tenant funding profiles and drawdowns read-only. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -42183,7 +42343,7 @@
         "readOnlyHint": true,
         "title": "Funding Allocation Preview"
       },
-      "description": "Preview attaching an active funding profile or drawdown to an active loan.",
+      "description": "Preview attaching an active funding profile or drawdown to an active loan. Use: Use when the authorized workflow requires this capability: Preview attaching an active funding profile or drawdown to an active loan. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -42386,7 +42546,7 @@
         "readOnlyHint": false,
         "title": "Funding Allocation Create"
       },
-      "description": "Create an idempotent append-only funding allocation for an active loan, including after activation.",
+      "description": "Create an append-only funding allocation for an active loan, including after activation. Use: Use when the authorized workflow requires this capability: Create an append-only funding allocation for an active loan. Effects: Creates an immutable funding allocation and audit record. Retry: The server derives the retry key from loan, amount, and date; retry identical arguments without sending an idempotencyKey. Changing source or note may conflict. Requires explicit human confirmation through the workflow before execution.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -42589,7 +42749,7 @@
         "readOnlyHint": true,
         "title": "Funding Allocation List"
       },
-      "description": "List append-only funding allocations for one loan read-only.",
+      "description": "List append-only funding allocations for one loan read-only. Use: Use when the authorized workflow requires this capability: List append-only funding allocations for one loan read-only. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -42734,7 +42894,7 @@
         "readOnlyHint": true,
         "title": "System Error Diagnostic Get"
       },
-      "description": "Inspect a safe tenant-scoped MCP diagnostic trace by correlation ID.",
+      "description": "Inspect a safe tenant-scoped MCP diagnostic trace by correlation ID. Use: Use when the authorized workflow requires this capability: Inspect a safe tenant-scoped MCP diagnostic trace by correlation ID. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -42978,7 +43138,7 @@
         "readOnlyHint": true,
         "title": "System Error Diagnostic List"
       },
-      "description": "List recent safe tenant-scoped MCP diagnostics with bounded filters.",
+      "description": "List recent safe tenant-scoped MCP diagnostics with bounded filters. Use: Use when the authorized workflow requires this capability: List recent safe tenant-scoped MCP diagnostics with bounded filters. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -43274,7 +43434,7 @@
         "readOnlyHint": true,
         "title": "Workflow Resolve"
       },
-      "description": "Read-only workflow guidance from current authorized state; it never confirms, authorizes, previews, or executes a financial operation.",
+      "description": "Read-only workflow guidance from current authorized state; it never confirms, authorizes, previews, or executes a financial operation. Use: Use when the authorized workflow requires this capability: Read-only workflow guidance from current authorized state; it never confirms, authorizes, previews, or executes a financial operation. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
@@ -43303,6 +43463,7 @@
               "renew_loan",
               "intermediary_collection",
               "cancel_payment_restore",
+              "defer_installment",
               "tool_help"
             ],
             "type": "string"
@@ -43312,9 +43473,19 @@
             "minLength": 1,
             "type": "string"
           },
+          "knownGuidanceVersion": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
           "knownWorkflowVersion": {
             "maxLength": 120,
             "minLength": 1,
+            "type": "string"
+          },
+          "schedulePublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
             "type": "string"
           },
           "target": {
@@ -43511,6 +43682,32 @@
                       }
                     ]
                   },
+                  "scheduleDeferral": {
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "scheduleDeferralBlockedReason": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "scheduleDeferralEligible": {
+                    "type": "boolean"
+                  },
                   "state": {
                     "anyOf": [
                       {
@@ -43575,6 +43772,93 @@
                 ],
                 "type": "string"
               },
+              "toolHelp": {
+                "additionalProperties": false,
+                "properties": {
+                  "commonErrors": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "recovery": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "recovery"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "guidanceVersion": {
+                    "maxLength": 120,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "prerequisites": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "relatedTools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "requiredInputs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "requiresHumanConfirmation": {
+                    "type": "boolean"
+                  },
+                  "retrySafety": {
+                    "type": "string"
+                  },
+                  "sideEffects": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "toolName": {
+                    "maxLength": 120,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "whenToUse": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "toolName",
+                  "guidanceVersion",
+                  "purpose",
+                  "whenToUse",
+                  "prerequisites",
+                  "sideEffects",
+                  "retrySafety",
+                  "commonErrors",
+                  "requiresHumanConfirmation",
+                  "requiredInputs",
+                  "relatedTools"
+                ],
+                "type": "object"
+              },
               "workflowId": {
                 "maxLength": 120,
                 "minLength": 1,
@@ -43612,6 +43896,522 @@
         "type": "object"
       },
       "title": "Workflow Resolve"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Tool Catalog Search"
+      },
+      "description": "Search active MCP tool metadata for candidate capabilities; never reads domain records or executes tools. Use: Use when unsure which visible MCP capability fits a request. Effects: No side effects; read-only. Retry: Safe to repeat with the identical valid arguments; this read does not require an idempotency key.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maxLength": 512,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "knownCatalogVersion": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "knownGuidanceVersion": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 10,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 240,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "tool.catalog.search",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "catalogVersion": {
+                "maxLength": 160,
+                "type": "string"
+              },
+              "guidanceVersion": {
+                "maxLength": 160,
+                "type": "string"
+              },
+              "hasMore": {
+                "type": "boolean"
+              },
+              "matches": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "domain": {
+                      "enum": [
+                        "borrowers",
+                        "payments",
+                        "loans",
+                        "disbursements",
+                        "intermediaries",
+                        "funding",
+                        "diagnostics",
+                        "discovery"
+                      ],
+                      "type": "string"
+                    },
+                    "prerequisites": {
+                      "items": {
+                        "maxLength": 320,
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "type": "array"
+                    },
+                    "purpose": {
+                      "maxLength": 320,
+                      "type": "string"
+                    },
+                    "relatedTools": {
+                      "items": {
+                        "enum": [
+                          "borrower.search",
+                          "borrower.portfolio",
+                          "borrower.resolve-and-portfolio",
+                          "borrower.create",
+                          "borrower.update",
+                          "borrower.alias",
+                          "intake.get",
+                          "intake.list",
+                          "payment.batch.get",
+                          "payment.batch.stage",
+                          "payment.batch.staging.evidence.prepare",
+                          "payment.batch.staging.evidence.finalize",
+                          "payment.batch.staging.extract",
+                          "payment.batch.workspace",
+                          "payment.batch.candidates",
+                          "payment.batch.staging.review",
+                          "payment.batch.staging.edit",
+                          "payment.batch.split",
+                          "payment.batch.decision",
+                          "payment.batch.cancel",
+                          "intake.create",
+                          "evidence.prepare",
+                          "evidence.finalize",
+                          "evidence.import-chatgpt-file",
+                          "loan.disbursement.evidence.import-chatgpt-file",
+                          "payment.evidence-supplement.import-chatgpt-file",
+                          "payment.evidence-supplement.record",
+                          "payment.preview",
+                          "payment.cancel",
+                          "payment.replacement.inspect",
+                          "payment.replacement.create",
+                          "payment.replacement.duplicate-review.preview",
+                          "payment.replacement.duplicate-review.execute",
+                          "payment.identity-decision.preview",
+                          "payment.identity-decision.execute",
+                          "payment.evidence-recovery.preview",
+                          "payment.evidence-recovery.execute",
+                          "payment.post",
+                          "payment.reverse",
+                          "payment.reverse-with-accrual.preview",
+                          "payment.reverse-with-accrual.execute",
+                          "payment.batch.create",
+                          "payment.batch.capture",
+                          "payment.batch.evidence.prepare-many",
+                          "payment.batch.evidence.finalize-many",
+                          "payment.batch.item.add",
+                          "payment.batch.evidence.prepare",
+                          "payment.batch.evidence.finalize",
+                          "payment.batch.preview",
+                          "payment.batch.execute",
+                          "payment.reconcile.preview",
+                          "payment.reconcile.reflow.preview",
+                          "payment.reconcile.reflow.execute",
+                          "payment.allocation-correction.preview",
+                          "payment.reconcile.preflight",
+                          "payment.reconcile.mark-review",
+                          "payment.reconcile.execute",
+                          "payment.allocation-correction.execute",
+                          "payment.restore.create",
+                          "payment.restore.evidence.prepare",
+                          "payment.restore.evidence.finalize",
+                          "payment.restore.preview",
+                          "payment.restore.execute",
+                          "payment.restore.cancel",
+                          "payment.restore.schedule-backfill",
+                          "loan.preview",
+                          "loan.cancel.preview",
+                          "loan.draft",
+                          "loan.draft.delete",
+                          "loan.activate",
+                          "loan.interest-rate.list",
+                          "loan.interest-rate.preview",
+                          "loan.interest-rate.execute",
+                          "loan.settlement.preview",
+                          "loan.settlement.execute",
+                          "loan.settlement.reverse",
+                          "loan.cancel.execute",
+                          "loan.replacement.preview",
+                          "loan.replacement.execute",
+                          "loan.replacement.reverse",
+                          "loan.disbursement.list",
+                          "loan.contract.get",
+                          "loan.inspect-context",
+                          "loan.payment-start-date.update",
+                          "loan.schedule.defer",
+                          "loan.payment-history.list",
+                          "payment.match-context",
+                          "loan.disbursement.draft",
+                          "loan.disbursement.update",
+                          "loan.disbursement.evidence.prepare",
+                          "loan.disbursement.evidence.finalize",
+                          "loan.disbursement.post",
+                          "loan.disbursement.reverse",
+                          "loan.commission-participant.list",
+                          "loan.commission-participant.add",
+                          "loan.commission-participant.update",
+                          "loan.commission-participant.end",
+                          "loan.commission.preview",
+                          "loan.commission.list",
+                          "loan.commission.calculate",
+                          "loan.commission.reverse",
+                          "payment.intermediary-attribution.create",
+                          "payment.intermediary-attribution.list",
+                          "payment.intermediary-attribution.reverse",
+                          "intermediary.search",
+                          "intermediary.create",
+                          "intermediary.profile.get",
+                          "intermediary.bank-account.save",
+                          "intermediary.managed-loan.list",
+                          "intermediary.assignment.create",
+                          "intermediary.assignment.end",
+                          "intermediary.disbursement.list",
+                          "intermediary.disbursement.get",
+                          "intermediary.disbursement.create",
+                          "intermediary.disbursement.event.create",
+                          "intermediary.disbursement.evidence.prepare",
+                          "intermediary.disbursement.evidence.finalize",
+                          "intermediary.disbursement.preview",
+                          "intermediary.disbursement.post",
+                          "intermediary.disbursement.reverse",
+                          "intermediary.collection.list",
+                          "intermediary.collection.create",
+                          "intermediary.collection.cancel",
+                          "intermediary.remittance.get",
+                          "intermediary.remittance.create",
+                          "intermediary.remittance.allocations.save",
+                          "intermediary.remittance.preview",
+                          "intermediary.remittance.evidence.prepare",
+                          "intermediary.remittance.evidence.finalize",
+                          "intermediary.remittance.post",
+                          "renewal.preview",
+                          "renewal.execute",
+                          "renewal.reverse",
+                          "loan.restructure.preview",
+                          "loan.restructure.execute",
+                          "loan.restructure.reverse",
+                          "loan.waiver.preview",
+                          "loan.waiver.execute",
+                          "loan.waiver.reverse",
+                          "funding-source.list",
+                          "funding-allocation.preview",
+                          "funding-allocation.create",
+                          "funding-allocation.list",
+                          "system.error-diagnostic.get",
+                          "system.error-diagnostic.list",
+                          "workflow.resolve",
+                          "tool.catalog.search"
+                        ],
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "type": "array"
+                    },
+                    "requiresHumanConfirmation": {
+                      "type": "boolean"
+                    },
+                    "retrySafety": {
+                      "maxLength": 320,
+                      "type": "string"
+                    },
+                    "sideEffects": {
+                      "items": {
+                        "maxLength": 320,
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "type": "array"
+                    },
+                    "toolName": {
+                      "enum": [
+                        "borrower.search",
+                        "borrower.portfolio",
+                        "borrower.resolve-and-portfolio",
+                        "borrower.create",
+                        "borrower.update",
+                        "borrower.alias",
+                        "intake.get",
+                        "intake.list",
+                        "payment.batch.get",
+                        "payment.batch.stage",
+                        "payment.batch.staging.evidence.prepare",
+                        "payment.batch.staging.evidence.finalize",
+                        "payment.batch.staging.extract",
+                        "payment.batch.workspace",
+                        "payment.batch.candidates",
+                        "payment.batch.staging.review",
+                        "payment.batch.staging.edit",
+                        "payment.batch.split",
+                        "payment.batch.decision",
+                        "payment.batch.cancel",
+                        "intake.create",
+                        "evidence.prepare",
+                        "evidence.finalize",
+                        "evidence.import-chatgpt-file",
+                        "loan.disbursement.evidence.import-chatgpt-file",
+                        "payment.evidence-supplement.import-chatgpt-file",
+                        "payment.evidence-supplement.record",
+                        "payment.preview",
+                        "payment.cancel",
+                        "payment.replacement.inspect",
+                        "payment.replacement.create",
+                        "payment.replacement.duplicate-review.preview",
+                        "payment.replacement.duplicate-review.execute",
+                        "payment.identity-decision.preview",
+                        "payment.identity-decision.execute",
+                        "payment.evidence-recovery.preview",
+                        "payment.evidence-recovery.execute",
+                        "payment.post",
+                        "payment.reverse",
+                        "payment.reverse-with-accrual.preview",
+                        "payment.reverse-with-accrual.execute",
+                        "payment.batch.create",
+                        "payment.batch.capture",
+                        "payment.batch.evidence.prepare-many",
+                        "payment.batch.evidence.finalize-many",
+                        "payment.batch.item.add",
+                        "payment.batch.evidence.prepare",
+                        "payment.batch.evidence.finalize",
+                        "payment.batch.preview",
+                        "payment.batch.execute",
+                        "payment.reconcile.preview",
+                        "payment.reconcile.reflow.preview",
+                        "payment.reconcile.reflow.execute",
+                        "payment.allocation-correction.preview",
+                        "payment.reconcile.preflight",
+                        "payment.reconcile.mark-review",
+                        "payment.reconcile.execute",
+                        "payment.allocation-correction.execute",
+                        "payment.restore.create",
+                        "payment.restore.evidence.prepare",
+                        "payment.restore.evidence.finalize",
+                        "payment.restore.preview",
+                        "payment.restore.execute",
+                        "payment.restore.cancel",
+                        "payment.restore.schedule-backfill",
+                        "loan.preview",
+                        "loan.cancel.preview",
+                        "loan.draft",
+                        "loan.draft.delete",
+                        "loan.activate",
+                        "loan.interest-rate.list",
+                        "loan.interest-rate.preview",
+                        "loan.interest-rate.execute",
+                        "loan.settlement.preview",
+                        "loan.settlement.execute",
+                        "loan.settlement.reverse",
+                        "loan.cancel.execute",
+                        "loan.replacement.preview",
+                        "loan.replacement.execute",
+                        "loan.replacement.reverse",
+                        "loan.disbursement.list",
+                        "loan.contract.get",
+                        "loan.inspect-context",
+                        "loan.payment-start-date.update",
+                        "loan.schedule.defer",
+                        "loan.payment-history.list",
+                        "payment.match-context",
+                        "loan.disbursement.draft",
+                        "loan.disbursement.update",
+                        "loan.disbursement.evidence.prepare",
+                        "loan.disbursement.evidence.finalize",
+                        "loan.disbursement.post",
+                        "loan.disbursement.reverse",
+                        "loan.commission-participant.list",
+                        "loan.commission-participant.add",
+                        "loan.commission-participant.update",
+                        "loan.commission-participant.end",
+                        "loan.commission.preview",
+                        "loan.commission.list",
+                        "loan.commission.calculate",
+                        "loan.commission.reverse",
+                        "payment.intermediary-attribution.create",
+                        "payment.intermediary-attribution.list",
+                        "payment.intermediary-attribution.reverse",
+                        "intermediary.search",
+                        "intermediary.create",
+                        "intermediary.profile.get",
+                        "intermediary.bank-account.save",
+                        "intermediary.managed-loan.list",
+                        "intermediary.assignment.create",
+                        "intermediary.assignment.end",
+                        "intermediary.disbursement.list",
+                        "intermediary.disbursement.get",
+                        "intermediary.disbursement.create",
+                        "intermediary.disbursement.event.create",
+                        "intermediary.disbursement.evidence.prepare",
+                        "intermediary.disbursement.evidence.finalize",
+                        "intermediary.disbursement.preview",
+                        "intermediary.disbursement.post",
+                        "intermediary.disbursement.reverse",
+                        "intermediary.collection.list",
+                        "intermediary.collection.create",
+                        "intermediary.collection.cancel",
+                        "intermediary.remittance.get",
+                        "intermediary.remittance.create",
+                        "intermediary.remittance.allocations.save",
+                        "intermediary.remittance.preview",
+                        "intermediary.remittance.evidence.prepare",
+                        "intermediary.remittance.evidence.finalize",
+                        "intermediary.remittance.post",
+                        "renewal.preview",
+                        "renewal.execute",
+                        "renewal.reverse",
+                        "loan.restructure.preview",
+                        "loan.restructure.execute",
+                        "loan.restructure.reverse",
+                        "loan.waiver.preview",
+                        "loan.waiver.execute",
+                        "loan.waiver.reverse",
+                        "funding-source.list",
+                        "funding-allocation.preview",
+                        "funding-allocation.create",
+                        "funding-allocation.list",
+                        "system.error-diagnostic.get",
+                        "system.error-diagnostic.list",
+                        "workflow.resolve",
+                        "tool.catalog.search"
+                      ],
+                      "type": "string"
+                    },
+                    "whenToUse": {
+                      "items": {
+                        "maxLength": 320,
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "toolName",
+                    "purpose",
+                    "domain",
+                    "whenToUse",
+                    "prerequisites",
+                    "sideEffects",
+                    "retrySafety",
+                    "requiresHumanConfirmation",
+                    "relatedTools"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              "nextCursor": {
+                "anyOf": [
+                  {
+                    "maxLength": 512,
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "profile": {
+                "enum": [
+                  "full",
+                  "core-read",
+                  "payments",
+                  "loans",
+                  "disbursements",
+                  "admin",
+                  "discovery"
+                ],
+                "type": "string"
+              },
+              "requiredProfiles": {
+                "items": {
+                  "enum": [
+                    "full",
+                    "core-read",
+                    "payments",
+                    "loans",
+                    "disbursements",
+                    "admin",
+                    "discovery"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "matches",
+                  "needs_clarification",
+                  "no_match",
+                  "connection_required",
+                  "refresh_required"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile",
+              "catalogVersion",
+              "guidanceVersion",
+              "status",
+              "matches",
+              "hasMore",
+              "nextCursor",
+              "requiredProfiles"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data"
+        ],
+        "type": "object"
+      },
+      "title": "Tool Catalog Search"
     }
   ]
 }

@@ -180,3 +180,8 @@ Before rollout, preserve database/object backups and the previously deployed app
 5. Reconcile transaction, schedule, loan, renewal, restructure, waiver, disbursement, opening-component, external-credit, and funding totals before reopening web/MCP writes.
 
 Removing or reinstalling the plugin affects only Codex discovery. It does not roll back financial data.
+
+
+## Catalog discovery and connection refresh
+
+Plugin 12.0.0 freezes the 147-tool backend catalog and adds a read-only eight-tool `discovery` profile. Use `tool.catalog.search` for metadata search; it cannot load hidden tools into every ChatGPT/Codex client and does not replace `workflow.resolve` or authorize writes. Where a provider host officially supports deferred tool search or dynamic allowlists, configure those host-native features for the provider connection only; do not represent CreditSync search as a host capability. Connect only the intended profile to avoid duplicated tool names. After rollout, compare the advertised catalog version, refresh/reconnect the provider connection, and start a new task. `listChanged` remains unsupported. Local synthetic evaluation does not establish host acceptance or model tool-choice accuracy.

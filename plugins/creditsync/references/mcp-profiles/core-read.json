@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-1b04c1db0aaaf82a",
+  "catalogVersion": "mcp-catalog-d816cad8ed74b1d2",
   "profile": "core-read",
   "toolCount": 38,
   "tools": [
@@ -18,7 +18,6 @@
     "payment.batch.workspace",
     "payment.batch.candidates",
     "loan.preview",
-    "loan.cancel.preview",
     "loan.interest-rate.list",
     "loan.disbursement.list",
     "loan.contract.get",
@@ -41,6 +40,7 @@
     "funding-allocation.list",
     "payment.reverse-with-accrual.preview",
     "payment.reconcile.preflight",
-    "workflow.resolve"
+    "workflow.resolve",
+    "tool.catalog.search"
   ]
 }

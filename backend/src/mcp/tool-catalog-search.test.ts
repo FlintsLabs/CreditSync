@@ -7,7 +7,10 @@ const catalog = advertisedMcpToolMetadataForProfile("full");
 const ctx = { profile: "full" as const, catalogVersion: "cat-v1", guidanceVersion: TOOL_GUIDANCE_VERSION, catalog };
 describe("tool catalog search", () => {
     it("ranks exact names and curated Thai/English phrases", () => {
-        expect(searchToolCatalog({ query: "loan.payment-start-date.update" }, ctx).matches[0]?.toolName).toBe("loan.payment-start-date.update");
+        const exact = searchToolCatalog({ query: "loan.payment-start-date.update" }, ctx);
+        expect(exact.matches.map((match) => match.toolName)).toEqual(["loan.payment-start-date.update"]);
+        expect(searchToolCatalog({ query: "defer an unpaid installment" }, ctx).matches[0]?.toolName).toBe("loan.schedule.defer");
+        expect(searchToolCatalog({ query: "เลื่อนงวดที่ยังไม่จ่ายไปท้ายตาราง" }, ctx).matches[0]?.toolName).toBe("loan.schedule.defer");
         expect(searchToolCatalog({ query: "เปลี่ยนวันชำระงวดแรก" }, ctx).matches[0]?.toolName).toBe("loan.payment-start-date.update");
         expect(searchToolCatalog({ query: "ค้นหาผู้กู้" }, ctx).matches[0]?.toolName).toBe("borrower.search");
         expect(searchToolCatalog({ query: "แนบสลิปการชำระ" }, ctx).matches[0]?.toolName).toBe("payment.evidence-supplement.import-chatgpt-file");

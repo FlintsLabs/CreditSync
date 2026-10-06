@@ -36,7 +36,7 @@ Concurrent same-tenant/kind/import-key races resolve to one durable binding and 
 
 MCP clients can use the bounded read-only composite tools `borrower.resolve-and-portfolio`, `loan.inspect-context`, and `payment.match-context` for summary-first context. Each collection reports `hasMore` and an opaque `nextCursor`; follow named child cursors before presenting a portfolio, schedule, or payment history as complete. Ambiguous borrower resolution remains a candidate set, and these tools do not write or calculate financial values.
 
-The MCP catalog provides typed purpose, prerequisites, side effects, retry safety, confirmation guidance, and related workflows for all 145 currently registered tools. Legacy and modern transports use the same tool descriptions and server instructions. Tool guidance describes how to use an operation; the advertised schema, service authorization, and current application state remain authoritative.
+The MCP catalog provides typed purpose, prerequisites, side effects, retry safety, confirmation guidance, and related workflows for all 147 currently registered tools. Legacy and modern transports use the same tool descriptions and server instructions. Tool guidance describes how to use an operation; the advertised schema, service authorization, and current application state remain authoritative.
 
 Payment-slip batches support an upload-first, human-review-only OCR step after staging evidence is finalized. The local OCR boundary returns candidate amount, Bangkok transfer time, payer/receiver, fee, and a hashed reference; it verifies downloaded bytes against the finalized evidence checksum, serializes extraction receipts by tenant/key, and does not create an intake, choose a borrower/loan, calculate accounting, or post money. Missing or ambiguous fields stay unresolved for manual review, and the existing evidence checksum/revision gates require a fresh preview after any change.
 
@@ -698,3 +698,6 @@ If the next goal is making this production-ready, the highest-value areas are:
 - add due-date reminders and notification workflows
 - improve repayment matching for bulk transfers and slip verification
 - harden secret handling and deployment configuration
+
+
+MCP capability discovery is available through the read-only search and `/mcp/discovery` profile. Search metadata, then resolve current financial workflow state and use the named inspect/preview/confirmation flow; search and named help never authorize writes. Generated tool guide and per-profile snapshots live under `plugins/creditsync/references/`. Clients with host-native deferred tool search or dynamic tool allowlists may use those documented APIs where supported; CreditSync cannot dynamically load hidden commands in every ChatGPT/Codex host. Avoid overlapping profile connections. After a catalog rollout, check the catalog version and refresh/reconnect the connection, then start a new task. `listChanged` is not advertised. Host/model acceptance remains unverified by local synthetic tests.

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.65 - 2026-10-06
+
+### Added
+
+- Synchronized CreditSync plugin 12.0.0 with the actual 147-tool catalog, seven profile snapshots, 11 retained skills, a generated bounded tool guide, deterministic discovery cases, and local sanitized trace grading; plugin schema breaking changes now target 13.0.0.
+- Added explicit schedule-deferral workflow guidance, profile-aware search phrases, synthetic confirmed/stop orchestration cases, and provider-host capability/refresh documentation.
+
+### Changed
+
+- Added precise Thai/English installment-deferral search phrases and exact-name precedence after deterministic regression cases exposed missed and noisy matches; metadata-search metrics are documented separately from model tool-choice evaluation.
+
 ## v0.4.64 - 2026-10-06
 
 ### Added

@@ -24,6 +24,9 @@ const phrases: readonly { phrase: string; names: readonly McpToolName[] }[] = [
     { phrase: "กู้คืนรายการที่กลับรายการ", names: ["payment.restore.create", "payment.restore.preview", "payment.restore.execute"] }, { phrase: "restore reversed payment", names: ["payment.restore.create", "payment.restore.preview", "payment.restore.execute"] },
     { phrase: "แทนรายการที่ยกเลิก", names: ["payment.replacement.create", "payment.replacement.inspect"] }, { phrase: "replace cancelled payment", names: ["payment.replacement.create", "payment.replacement.inspect"] },
     { phrase: "cancelled payment replacement", names: ["payment.replacement.create", "payment.replacement.inspect"] },
+    { phrase: "defer an unpaid installment", names: ["loan.schedule.defer"] }, { phrase: "เลื่อนงวดที่ยังไม่จ่ายไปท้ายตาราง", names: ["loan.schedule.defer"] }, { phrase: "เลื่อนงวดที่ยังไม่ชำระ", names: ["loan.schedule.defer"] },
+    { phrase: "commission reversal preview", names: ["loan.commission.reverse"] }, { phrase: "commission reverse preview", names: ["loan.commission.reverse"] },
+    { phrase: "renew a daily loan", names: ["renewal.preview"] }, { phrase: "replace active loan with funded draft", names: ["loan.replacement.preview"] },
     { phrase: "reversed payment restore", names: ["payment.restore.create", "payment.restore.preview", "payment.restore.execute"] },
     { phrase: "ยกเลิกสัญญากู้", names: ["loan.cancel.preview", "loan.cancel.execute"] },
     { phrase: "cancel loan", names: ["loan.cancel.preview", "loan.cancel.execute"] },
@@ -49,14 +52,16 @@ export function searchToolCatalog(input: ToolCatalogSearchInput, context: Contex
     const active = new Set(TOOL_PROFILES[context.profile]);
     const scores = new Map<string, number>();
     const exact = context.catalog.find((d) => normalize(d.name) === query);
-    if (exact) scores.set(exact.name, 1_000_000);
-    for (const item of phrases) if (query.includes(normalize(item.phrase))) for (const name of item.names) scores.set(name, Math.max(scores.get(name) ?? 0, 10_000));
-    const words = query.split(" ").filter((word) => word.length > 1 && !generic.has(word));
-    if (words.length) for (const [name, { i }] of defs) {
-        const guidance = TOOL_GUIDANCE[name as McpToolName];
-        const terms = normalize([name, guidance.purpose, ...guidance.searchTerms.en, ...guidance.searchTerms.th].join(" ")).split(" ");
-        const overlap = words.filter((word) => terms.includes(word)).length;
-        if (overlap) scores.set(name, Math.max(scores.get(name) ?? 0, 100 + overlap * 10 - i / 10000));
+    if (exact) { scores.clear(); scores.set(exact.name, 1_000_000); }
+    if (!exact) {
+        for (const item of phrases) if (query.includes(normalize(item.phrase))) for (const name of item.names) scores.set(name, Math.max(scores.get(name) ?? 0, 10_000));
+        const words = query.split(" ").filter((word) => word.length > 1 && !generic.has(word));
+        if (words.length) for (const [name, { i }] of defs) {
+            const guidance = TOOL_GUIDANCE[name as McpToolName];
+            const terms = normalize([name, guidance.purpose, ...guidance.searchTerms.en, ...guidance.searchTerms.th].join(" ")).split(" ");
+            const overlap = words.filter((word) => terms.includes(word)).length;
+            if (overlap) scores.set(name, Math.max(scores.get(name) ?? 0, 100 + overlap * 10 - i / 10000));
+        }
     }
     const ranked = [...scores].filter(([n, score]) => defs.has(n as McpToolName) && score > 0).sort((a, b) => b[1] - a[1] || defs.get(a[0] as McpToolName)!.i - defs.get(b[0] as McpToolName)!.i);
     if (input.cursor !== undefined && offset >= ranked.length) return { ...base, status: "refresh_required", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };

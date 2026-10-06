@@ -1,5 +1,17 @@
 # CreditSync Plugin Changelog
 
+## v12.0.0 - 2026-10-06
+
+### Added
+
+- Added the `discovery` profile, metadata-only catalog search guidance, deterministic discovery cases, and local sanitized trace grading.
+- Regenerated the frozen 147-tool MCP contract, all seven profile snapshots, and bounded tool guide from the serving backend; retained all 11 skills and advanced breaking-contract compatibility to plugin 13.0.0.
+- Added explicit installment deferral guidance and distinguished it from first-date correction, renewal, replacement, settlement, payment evidence, and payout evidence.
+
+### Changed
+
+- Clarified host-native deferred search/dynamic allowlist limits, profile connection selection, and refresh/reconnect after catalog rollout.
+
 ## v11.0.0 - 2026-09-25
 
 ### Changed

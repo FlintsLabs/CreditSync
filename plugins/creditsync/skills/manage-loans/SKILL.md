@@ -13,6 +13,10 @@ Loan creation is `preview → draft → activate`. Terms become immutable after 
 
 For a bounded read before a loan detail workflow, call `loan.inspect-context` with the exact loan public UUID. Select `summary`, `schedule`, or `history`; follow the named child `nextCursor` until `hasMore` is false before claiming the schedule, payment history, or disbursement history is complete. This read composes authoritative services and performs no financial write or calculation.
 
+## Defer one unpaid installment
+
+For an explicitly requested schedule deferral (including Thai requests toเลื่อนงวด), inspect the exact loan and exact unpaid installment using the authoritative loan/schedule inspection. Show its due date, unpaid state, and backend-returned principal/interest/fee/total components, plus the replacement date at the schedule tail. A deferral is distinct from correcting the first payment date (`loan.payment-start-date.update`), renewal, replacement, settlement, or posting a payment. Never recreate schedule accounting. Obtain explicit confirmation of that exact installment and date, then call `loan.schedule.defer` with the required confirmation, reason, and stable idempotency key. Re-inspect the source and appended schedule after success; stop on paid/partial, stale, ambiguous, wrong-loan, or inaccessible state.
+
 ## Create and activate
 
 1. Resolve the borrower with `borrower.search` and inspect `borrower.portfolio`. Stop for ambiguous identity. For the selected contract's exact terms, daily/weekly/monthly schedule, floating-interest policy, or single-payment conditions, call `loan.contract.get` before explaining the agreement.
