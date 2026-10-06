@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.66 - 2026-10-06
+
+### Added
+
+- Added the Task 6 verification report for MCP discovery, including serialized backend results, frontend/plugin gates, reproducible catalog artifacts, measured wire bytes, historical live-catalog mismatch evidence, and explicit live/client acceptance boundaries.
+
+### Changed
+
+- Updated the root README to describe the current CreditSync plugin 12.0.0, 147-tool catalog, seven profiles, and authorized client refresh procedure.
+
 ## v0.4.65 - 2026-10-06
 
 ### Added
