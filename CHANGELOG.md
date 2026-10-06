@@ -6,6 +6,10 @@
 
 - Added explicitly confirmed `loan.schedule.defer` through MCP and synchronized the frozen CreditSync plugin contract to 11.1.0; it changes only the schedule and never records a payment.
 
+### Changed
+
+- Set the repository's tmux implementation-worker model to `gpt-6-luna` with medium reasoning effort.
+
 ## v0.4.64 - 2026-10-06
 
 ### Added
