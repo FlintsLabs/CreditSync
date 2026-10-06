@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Integrated the six main-branch history commits while retaining the verified 147-tool discovery release, schedule-deferral workflow, and backend Docker context protections.
 - Synchronized the authenticated UI release footer with application `0.4.69`, MCP schema `1.0`, and the actual CreditSync plugin `12.0.0` manifest; point its changelog link at this release branch until it is integrated.
 - Excluded environment files, secrets, dependencies, generated output, and logs from backend Docker build contexts, preserving the upstream context-protection fix.
 
