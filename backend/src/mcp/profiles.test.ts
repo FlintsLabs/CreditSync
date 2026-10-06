@@ -86,7 +86,7 @@ describe("MCP catalog and profiles", () => {
         for (const profile of ["full", "core-read", "payments", "loans", "disbursements", "admin"] as const) {
             expect(toolNamesForProfile(profile)).toContain("tool.catalog.search");
         }
-        expect(MCP_TOOL_NAMES).toHaveLength(146);
+        expect(MCP_TOOL_NAMES).toHaveLength(147);
         expect(toolNamesForProfile("core-read")).toHaveLength(38);
         expect(toolNamesForProfile("core-read")).not.toContain("loan.cancel.preview");
         const cancellationPreview = catalogByName.get("loan.cancel.preview")!;
@@ -129,6 +129,10 @@ describe("MCP catalog and profiles", () => {
         has("admin", "system.error-diagnostic.get", "system.error-diagnostic.list", "funding-source.list", "funding-allocation.list", "loan.commission.list", "loan.commission.calculate");
         has("core-read", "borrower.search", "borrower.portfolio", "intake.get", "loan.contract.get", "loan.payment-history.list", "loan.disbursement.list", "system.error-diagnostic.list");
         has("disbursements", "intermediary.collection.list", "intermediary.collection.create", "intermediary.collection.cancel", "intermediary.remittance.get", "intermediary.remittance.create", "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare", "intermediary.remittance.evidence.finalize", "intermediary.remittance.post");
+        has("loans", "loan.schedule.defer");
+        for (const profile of ["core-read", "disbursements", "admin"] as const) {
+            expect(toolNamesForProfile(profile)).not.toContain("loan.schedule.defer");
+        }
     });
 
     test("replays valid representative workflows through all profiles, stops after evidence failure, and denies out-of-profile calls", async () => {

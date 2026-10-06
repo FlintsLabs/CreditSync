@@ -104,6 +104,8 @@ Account identity and tenant role are read-only values supplied by the authorized
 
 ### 3. Loan Management
 
+The MCP `loans` profile supports deferring one fully unpaid installment on an active scheduled loan. Inspect and select the exact schedule first, review the replacement date and component amounts, then obtain explicit confirmation; deferral adds a replacement schedule row and audit record without creating a payment.
+
 - filter the Loan List between Active, Done, and All agreements while retaining search, status, funding, and sort controls
 - group multiple Loan List cards under the canonical borrower name while retaining the same card layout and interactions
 - view Loan Detail repayment and payment-history tables with row numbers, total-record counts, configurable page sizes, summary counts, and clear paid/due/overdue status indicators

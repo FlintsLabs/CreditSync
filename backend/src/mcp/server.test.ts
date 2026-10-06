@@ -126,6 +126,28 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
+    test("advertises schedule deferral as a strict confirmed financial command", async () => {
+        const metadata = advertisedMcpToolMetadata().find((tool) => tool.name === "loan.schedule.defer");
+        expect(metadata).toBeDefined();
+        expect(metadata!.inputSchema).toMatchObject({ additionalProperties: false, required: expect.arrayContaining(["loanPublicId", "schedulePublicId", "reason", "idempotencyKey", "confirmed"]) });
+        expect((metadata!.inputSchema.properties as Record<string, any>).confirmed).toMatchObject({ const: true });
+        expect(metadata!.outputSchema).toMatchObject({ additionalProperties: false });
+        expect(metadata!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+        expect(metadata!.policy).toEqual({ kind: "financial", requiresAudit: true });
+
+        let calls = 0;
+        const baseUrl = await startServer({ toolHandlers: { "loan.schedule.defer": async () => { calls += 1; return {}; } } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        for (const args of [
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", idempotencyKey: "key" },
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", idempotencyKey: "key", confirmed: false },
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", idempotencyKey: "key", confirmed: true, extra: true },
+        ]) expect((await client.callTool({ name: "loan.schedule.defer", arguments: args })).isError).toBe(true);
+        expect(calls).toBe(0);
+        await client.close();
+    });
+
     test("legacy MCP tool catalog search returns metadata without audit fields and rejects spoofed context", async () => {
         let calls = 0;
         let auditLookups = 0;
@@ -1087,6 +1109,7 @@ describe("CreditSync stateless MCP contract", () => {
             "loan.draft.delete",
             "loan.activate",
             "loan.payment-start-date.update",
+            "loan.schedule.defer",
             "loan.interest-rate.execute",
             "loan.settlement.execute",
             "loan.settlement.reverse",

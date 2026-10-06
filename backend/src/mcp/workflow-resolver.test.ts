@@ -2,13 +2,46 @@ import { describe, expect, test } from "bun:test";
 import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, type ResolverProfile } from "./workflow-resolver";
 import { MCP_TOOL_NAMES } from "./catalog-types";
 import { toolIsVisibleInProfile, WORKFLOW_REGISTRY, WORKFLOW_TOOL_INVENTORY, WORKFLOW_VERSION } from "./workflow-registry";
-import { advertisedMcpToolMetadata, toolInputSchemas } from "./server";
+import { advertisedMcpToolMetadata, toolDataSchemas, toolInputSchemas } from "./server";
 
 const catalogVersion = "mcp-catalog-test";
 const target = { kind: "payment_intake" as const, publicId: "0198c481-3e2b-7000-8000-000000000001" };
 const base = { profile: "payments" as const, catalogVersion, workflowVersion: WORKFLOW_VERSION };
 
 describe("workflow resolver policy", () => {
+    test("deferral asks for an exact schedule, then returns review data and confirmation inputs without confirming", () => {
+        const loanTarget = { kind: "loan" as const, publicId: "0198c481-3e2b-7000-8000-000000000001" };
+        const missing = resolveWorkflowPolicy({ intent: "defer_installment", profile: "loans", target: loanTarget, attachments: "none" }, { targetAvailable: true, identityResolved: true }, { profile: "loans", catalogVersion });
+        expect(missing.status).toBe("next_step");
+        expect(missing.blockers).toContain("SCHEDULE_SELECTION_REQUIRED");
+        expect(missing.nextSteps[0]).toMatchObject({ toolName: "loan.inspect-context", arguments: { loanPublicId: loanTarget.publicId } });
+
+        const review = { eligible: true, sourceDueDate: "2026-08-10", replacementDueDate: "2026-08-12", scheduledPrincipal: "90.00", scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00" };
+        const ready = resolveWorkflowPolicy({ intent: "defer_installment", profile: "loans", target: loanTarget, schedulePublicId: "0198c481-3e2b-7000-8000-000000000002", attachments: "none" }, { targetAvailable: true, identityResolved: true, scheduleDeferralEligible: true, scheduleDeferral: review }, { profile: "loans", catalogVersion });
+        expect(ready.status).toBe("confirmation_required");
+        expect(ready.nextSteps[0]).toMatchObject({ toolName: "loan.schedule.defer", arguments: { loanPublicId: loanTarget.publicId, schedulePublicId: "0198c481-3e2b-7000-8000-000000000002" }, requiredInputs: ["reason", "idempotencyKey", "confirmed"], requiresConfirmation: true });
+        expect(ready.observed.scheduleDeferral).toEqual(review);
+        expect(ready.nextSteps[0]?.arguments).not.toHaveProperty("confirmed");
+        expect(toolDataSchemas["workflow.resolve"].safeParse(ready).success).toBe(true);
+    });
+
+    test("deferral stops on ineligible or inaccessible selection and is unavailable on payment profile", () => {
+        const loanTarget = { kind: "loan" as const, publicId: "0198c481-3e2b-7000-8000-000000000001" };
+        const selected = "0198c481-3e2b-7000-8000-000000000002";
+        const blocked = resolveWorkflowPolicy({ intent: "defer_installment", profile: "loans", target: loanTarget, schedulePublicId: selected, attachments: "none" }, { targetAvailable: true, identityResolved: true, scheduleDeferralEligible: false, scheduleDeferralBlockedReason: "SCHEDULE_NOT_FULLY_UNPAID" }, { profile: "loans", catalogVersion });
+        expect(blocked.status).toBe("blocked");
+        expect(blocked.nextSteps).toHaveLength(0);
+        expect(blocked.blockers).toContain("SCHEDULE_NOT_FULLY_UNPAID");
+        const hidden = resolveWorkflowPolicy({ intent: "defer_installment", profile: "payments", target: loanTarget, schedulePublicId: selected }, { targetAvailable: true, identityResolved: true }, { profile: "payments", catalogVersion });
+        expect(hidden.status).toBe("connection_required");
+        for (const blockedReason of ["FLOATING_LOAN", "LOAN_NOT_ACTIVE", "SCHEDULE_UNAVAILABLE"] as const) {
+            const ineligible = resolveWorkflowPolicy({ intent: "defer_installment", profile: "loans", target: loanTarget, schedulePublicId: selected, attachments: "none" }, { targetAvailable: true, identityResolved: true, scheduleDeferralEligible: false, scheduleDeferralBlockedReason: blockedReason }, { profile: "loans", catalogVersion });
+            expect(ineligible.status).toBe("blocked");
+            expect(ineligible.blockers).toContain(blockedReason);
+            expect(ineligible.nextSteps).toHaveLength(0);
+        }
+    });
+
     test("emits schema-valid UUID arrays for identity review participants", () => {
         const first = "0198c481-3e2b-7000-8000-000000000001";
         const second = "0198c481-3e2b-7000-8000-000000000002";

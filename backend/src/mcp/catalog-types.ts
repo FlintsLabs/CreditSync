@@ -14,7 +14,7 @@ export const MCP_TOOL_NAMES = [
     "loan.cancel.preview", "loan.draft", "loan.draft.delete", "loan.activate", "loan.interest-rate.list", "loan.interest-rate.preview",
     "loan.interest-rate.execute", "loan.settlement.preview", "loan.settlement.execute", "loan.settlement.reverse", "loan.cancel.execute",
     "loan.replacement.preview", "loan.replacement.execute", "loan.replacement.reverse", "loan.disbursement.list", "loan.contract.get", "loan.inspect-context",
-    "loan.payment-start-date.update", "loan.payment-history.list", "payment.match-context", "loan.disbursement.draft", "loan.disbursement.update",
+    "loan.payment-start-date.update", "loan.schedule.defer", "loan.payment-history.list", "payment.match-context", "loan.disbursement.draft", "loan.disbursement.update",
     "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize", "loan.disbursement.post", "loan.disbursement.reverse",
     "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update", "loan.commission-participant.end",
     "loan.commission.preview", "loan.commission.list", "loan.commission.calculate", "loan.commission.reverse",

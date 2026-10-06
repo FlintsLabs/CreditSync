@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { db } from "../db";
-import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentEvidence, paymentIntakes, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanSchedules, loanScheduleDeferrals, loans, paymentEvidence, paymentIntakes, users } from "../db/schema";
 import type { CommandContext } from "../services/command-context";
 import { createDisbursementDraft } from "../services/loan-disbursement-service";
 import { createPaymentIntake } from "../services/payment-service";
@@ -49,6 +49,33 @@ integrationTest("uses exact finalized payment file association and tenant author
     const foreign = await resolveWorkflowFromBackend(context(otherTenant), input, "payments", "resolver-catalog", "resolver-workflow");
     expect(foreign.observed.evidenceReady).toBe(false);
     expect(foreign.status).toBe("needs_input");
+});
+
+integrationTest("deferral resolver reads the exact selected schedule and never executes it", async () => {
+    const owner = await db.insert(users).values({ tenantId: "resolver-deferral", email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+    const borrower = await db.insert(borrowers).values({ tenantId: owner.tenantId, ownerUserId: owner.id, name: "Resolver deferral borrower" }).returning().then((rows) => rows[0]!);
+    const loan = await db.insert(loans).values({ tenantId: owner.tenantId, ownerUserId: owner.id, borrowerId: borrower.id, principalAmount: "200.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, installmentAmount: "100.00", totalInstallments: 2, startDate: "2026-08-09", outstandingPrincipal: "200.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+    const source = await db.insert(loanSchedules).values({ tenantId: owner.tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-10", scheduledPrincipal: "90.00", scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00", remainingDue: "100.00", status: "pending" }).returning().then((rows) => rows[0]!);
+    await db.insert(loanSchedules).values({ tenantId: owner.tenantId, loanId: loan.id, installmentNo: 2, dueDate: "2026-08-11", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", remainingDue: "100.00", status: "pending" });
+    const target = { kind: "loan" as const, publicId: loan.publicId };
+    const missing = await resolveWorkflowFromBackend(context(owner), { intent: "defer_installment", target, attachments: "none" }, "loans", "resolver-catalog", "resolver-workflow");
+    expect(missing.status).toBe("next_step");
+    expect(missing.blockers).toContain("SCHEDULE_SELECTION_REQUIRED");
+    const selected = await resolveWorkflowFromBackend(context(owner), { intent: "defer_installment", target, schedulePublicId: source.publicId, attachments: "none" }, "loans", "resolver-catalog", "resolver-workflow");
+    expect(selected.status).toBe("confirmation_required");
+    expect(selected.observed.scheduleDeferral).toMatchObject({ eligible: true, sourceDueDate: "2026-08-10", replacementDueDate: "2026-08-12", scheduledPrincipal: "90.00", scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00" });
+    expect(selected.nextSteps[0]).toMatchObject({ toolName: "loan.schedule.defer", requiresConfirmation: true });
+    expect(await db.select().from(loanScheduleDeferrals).where(eq(loanScheduleDeferrals.tenantId, owner.tenantId))).toHaveLength(0);
+    expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, owner.tenantId))).toHaveLength(0);
+    const otherLoan = await db.insert(loans).values({ tenantId: owner.tenantId, ownerUserId: owner.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, installmentAmount: "100.00", totalInstallments: 1, startDate: "2026-08-09", outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+    const foreignSchedule = await db.insert(loanSchedules).values({ tenantId: owner.tenantId, loanId: otherLoan.id, installmentNo: 1, dueDate: "2026-08-10", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", remainingDue: "100.00", status: "pending" }).returning().then((rows) => rows[0]!);
+    const wrongLoan = await resolveWorkflowFromBackend(context(owner), { intent: "defer_installment", target, schedulePublicId: foreignSchedule.publicId, attachments: "none" }, "loans", "resolver-catalog", "resolver-workflow");
+    expect(wrongLoan.status).toBe("blocked");
+    expect(wrongLoan.blockers).toContain("SCHEDULE_UNAVAILABLE");
+    await db.update(loanSchedules).set({ status: "partial", paidTotal: "1.00", remainingDue: "99.00" }).where(eq(loanSchedules.id, source.id));
+    const partial = await resolveWorkflowFromBackend(context(owner), { intent: "defer_installment", target, schedulePublicId: source.publicId, attachments: "none" }, "loans", "resolver-catalog", "resolver-workflow");
+    expect(partial.status).toBe("blocked");
+    expect(partial.nextSteps).toHaveLength(0);
 });
 
 integrationTest.each([

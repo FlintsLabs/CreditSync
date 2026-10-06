@@ -10,6 +10,8 @@ test("allows deferral only for a fully unpaid row with a positive balance", () =
     expect(canDeferSchedule({ paidTotal: "100.00", remainingDue: "100.00", status: "partial" })).toBe(false);
     expect(canDeferSchedule({ paidTotal: "0.00", remainingDue: "0.00", status: "paid" })).toBe(false);
     expect(canDeferSchedule({ paidTotal: "0.00", remainingDue: "200.00", status: "deferred" })).toBe(false);
+    expect(canDeferSchedule({ paidTotal: "0.00", remainingDue: "200.00", status: "paid" })).toBe(false);
+    expect(canDeferSchedule({ paidTotal: "0.00", remainingDue: "200.00", status: "partial" })).toBe(false);
 });
 
 test("does not change the immutable contract installment count during deferral", () => {

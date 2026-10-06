@@ -4,10 +4,10 @@ import { WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION } from "./workflow-version";
 
 export { WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION } from "./workflow-version";
 
-export type WorkflowIntent = "inspect" | "receive_payment" | "close_loan" | "originate_loan" | "disburse_loan" | "attach_evidence" | "renew_loan" | "intermediary_collection" | "cancel_payment_restore" | "tool_help";
+export type WorkflowIntent = "inspect" | "receive_payment" | "close_loan" | "originate_loan" | "disburse_loan" | "attach_evidence" | "renew_loan" | "intermediary_collection" | "cancel_payment_restore" | "defer_installment" | "tool_help";
 
 export const WORKFLOW_INTENTS = [
-    "inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "cancel_payment_restore", "tool_help",
+    "inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "cancel_payment_restore", "defer_installment", "tool_help",
 ] as const satisfies readonly WorkflowIntent[];
 
 export type WorkflowRule = Readonly<{
@@ -21,6 +21,7 @@ export type WorkflowRule = Readonly<{
 const workflowRules: readonly WorkflowRule[] = [
     { intent: "inspect", description: "Inspect authoritative borrower, loan, payment, or payout state.", profiles: ["full", "core-read", "payments", "loans", "disbursements", "admin"], tools: ["borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context", "intake.get", "loan.disbursement.list"], attachmentTransport: "none" },
     { intent: "cancel_payment_restore", description: "Inspect an exact restore draft, require explicit confirmation, and cancel only that unposted child.", profiles: ["full", "payments"], tools: ["intake.get", "payment.restore.cancel"], attachmentTransport: "human_review" },
+    { intent: "defer_installment", description: "Inspect an exact unpaid scheduled installment and require explicit confirmation before deferring it.", profiles: ["full", "loans"], tools: ["loan.inspect-context", "loan.schedule.defer"], attachmentTransport: "none" },
     { intent: "receive_payment", description: "Create and reconcile a payment intake through the existing payment workflow.", profiles: ["full", "payments"], tools: ["intake.create", "evidence.prepare", "evidence.finalize", "evidence.import-chatgpt-file", "payment.replacement.inspect", "payment.identity-decision.preview", "payment.identity-decision.execute", "payment.evidence-recovery.preview", "payment.evidence-recovery.execute", "payment.preview", "payment.post"], attachmentTransport: "payment" },
     { intent: "close_loan", description: "Preview and execute the applicable scheduled or floating close-out.", profiles: ["full", "loans"], tools: ["loan.inspect-context", "loan.settlement.preview", "loan.settlement.execute", "payment.preview", "payment.post"], attachmentTransport: "human_review" },
     { intent: "originate_loan", description: "Preview, create, and activate a new loan with immutable terms.", profiles: ["full", "loans"], tools: ["loan.preview", "loan.draft", "loan.activate"], attachmentTransport: "none" },

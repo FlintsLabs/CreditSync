@@ -14,7 +14,7 @@ Task 1 review policy ruling (2026-10-06): verified service behavior takes preced
 
 **Spec:** `docs/superpowers/specs/2026-10-06-mcp-tool-discovery-design.md` (read in full before execution).
 
-Status: approved on 2026-10-06; Tasks 1–2 complete in commits, Tasks 3–6 remain not started.
+Status: approved on 2026-10-06; Tasks 1–3 complete on the feature branch, Tasks 4–6 remain not started.
 
 ## Global Constraints
 
@@ -86,15 +86,15 @@ Status: approved on 2026-10-06; Tasks 1–2 complete in commits, Tasks 3–6 rem
 
 **Interfaces:** add `inspectLoanScheduleDeferral(ctx: CommandContext, loanPublicId: string, schedulePublicId: string)` as an authorized read-only helper returning eligible/blocked reason and exact safe source/replacement review data. Existing `deferLoanSchedule(ctx, loanPublicId, schedulePublicId, { reason })` remains the command. Resolver gains `defer_installment` and optional `schedulePublicId`.
 
-- [ ] Write missing-tool and schema tests for `loan.schedule.defer`: exact required UUID/reason/idempotency/`confirmed: true` input; unknown or false confirmation fields fail before execution; safe decimal-string output, destructive/idempotent/financial policy, and full/loans-only visibility.
-- [ ] Add disposable integration fixtures for an active scheduled loan and fully unpaid source. Assert replacement due date is the day after the schedule tail, source becomes deferred, contractual installment count stays unchanged, principal/interest/fee/total are conserved, no payment transaction is inserted, and the deferral ledger/audit are linked to the command context.
-- [ ] Test same-key identical replay returns the existing replacement; concurrent identical retries produce one ledger/audit/replacement and resume it; changed-payload key reuse conflicts; partial/floating/inactive/cross-tenant/cross-owner requests stop without writes. Assert required public audit IDs and correlation IDs are retrievable through the normal MCP audit adapter.
-- [ ] Run the focused tests through `bash backend/scripts/test-disposable-postgres.sh src/services/loan-schedule-deferral.integration.test.ts src/mcp/default.test.ts`; capture the intended missing-adapter failures without a production database.
-- [ ] Register strict safe output, handler calling the existing service, risk/idempotency sets, financial envelope, and audit target `loan_schedule_deferral` / `deferred`. Do not recreate calculations in the MCP adapter.
-- [ ] Implement the service inspection helper by reusing actual eligibility/access/date policies. Add resolver observation and review data for exact loan/schedule selection. Missing schedule requires inspection/selection; ineligible or unauthorized source stops; eligible source returns confirmation-required guidance with required inputs, never confirmation or execution.
-- [ ] Extend resolver tests for missing target/schedule, selected wrong-loan schedule, inactive/floating/partial source, profile restrictions, stale catalog/workflow versions, and successful no-write confirmation guidance. Execution must revalidate current state in the existing transaction.
-- [ ] Run focused disposable tests and backend typecheck. Fix adapter/audit/authorization/replay defects necessary for the specified behavior. Report for review only if the repair requires new financial terms or policy outside the spec.
-- [ ] Update changelog and commit registration/service inspection/resolver safety tests together.
+- [x] Write missing-tool and schema tests for `loan.schedule.defer`: exact required UUID/reason/idempotency/`confirmed: true` input; unknown or false confirmation fields fail before execution; safe decimal-string output, destructive/idempotent/financial policy, and full/loans-only visibility.
+- [x] Add disposable integration fixtures for an active scheduled loan and fully unpaid source. Assert replacement due date is the day after the schedule tail, source becomes deferred, contractual installment count stays unchanged, principal/interest/fee/total are conserved, no payment transaction is inserted, and the deferral ledger/audit are linked to the command context.
+- [x] Test same-key identical replay returns the existing replacement; concurrent identical retries produce one ledger/audit/replacement and resume it; changed-payload key reuse conflicts; partial/floating/inactive/cross-tenant/cross-owner requests stop without writes. Assert required public audit IDs and correlation IDs are retrievable through the normal MCP audit adapter.
+- [x] Run focused tests through `bash backend/scripts/test-disposable-postgres.sh src/services/loan-schedule-deferral.integration.test.ts src/mcp/default.test.ts src/mcp/workflow-resolver-service.test.ts`. The command adapter from approved commit 9ff3ff5 was selectively reused, so no missing-adapter RED run is claimed.
+- [x] Register strict safe output, handler calling the existing service, risk/idempotency sets, financial envelope, and audit target `loan_schedule_deferral` / `deferred`. Do not recreate calculations in the MCP adapter.
+- [x] Implement the service inspection helper by reusing actual eligibility/access/date policies. Add resolver observation and review data for exact loan/schedule selection. Missing schedule requires inspection/selection; ineligible or unauthorized source stops; eligible source returns confirmation-required guidance with required inputs, never confirmation or execution.
+- [x] Extend resolver tests for missing target/schedule, selected wrong-loan schedule, inactive/floating/partial source, profile restrictions, stale catalog/workflow versions, and successful no-write confirmation guidance. Execution must revalidate current state in the existing transaction.
+- [x] Run focused disposable tests and backend typecheck. Fix adapter/audit/authorization/replay defects necessary for the specified behavior. Report for review only if the repair requires new financial terms or policy outside the spec.
+- [x] Update changelog and commit registration/service inspection/resolver safety tests together.
 
 ## Task 4: small entry profile and complete named tool help
 

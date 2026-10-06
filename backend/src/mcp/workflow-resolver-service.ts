@@ -13,6 +13,7 @@ import { inspectPaymentReplacement } from "../services/payment-replacement-servi
 import { classifyPaymentWorkflowBlocker } from "../services/payment-workflow-blockers";
 import { paymentDuplicateReviewMemberships } from "../db/schema";
 import { normalizeBorrowerText } from "../services/borrower-service";
+import { inspectLoanScheduleDeferral } from "../services/loan-schedule-deferral-service";
 
 type ResolverWireInput = Omit<ResolverInput, "profile"> & { profile?: never };
 
@@ -137,6 +138,16 @@ export async function resolveWorkflowFromBackend(ctx: CommandContext, input: Res
                 ? { targetAvailable: true, identityResolved: true, state: "mutable" }
                 : { targetAvailable: false };
         }
+    }
+    if (input.intent === "defer_installment" && input.target?.kind === "loan" && input.schedulePublicId && observation.targetAvailable === true) {
+        const inspection = await inspectLoanScheduleDeferral(ctx, input.target.publicId, input.schedulePublicId);
+        observation = {
+            ...observation,
+            scheduleDeferralEligible: inspection.eligible,
+            ...(inspection.eligible
+                ? { scheduleDeferral: inspection }
+                : { scheduleDeferralBlockedReason: inspection.blockedReason }),
+        };
     }
     return resolveWorkflowPolicy({ ...input, profile }, observation, { profile, catalogVersion, workflowVersion } satisfies ResolverProfile);
 }

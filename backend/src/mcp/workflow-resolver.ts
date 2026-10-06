@@ -14,6 +14,7 @@ export type ResolverInput = Readonly<{
     knownWorkflowVersion?: string;
     knownCatalogVersion?: string;
     toolName?: string;
+    schedulePublicId?: string;
 }>;
 
 export type ResolverObservation = Readonly<{
@@ -35,6 +36,9 @@ export type ResolverObservation = Readonly<{
     duplicateBlockerPublicIds?: readonly string[];
     identityDecisionRequired?: boolean;
     paymentBlockers?: readonly PaymentWorkflowBlocker[];
+    scheduleDeferral?: Readonly<Record<string, unknown>>;
+    scheduleDeferralEligible?: boolean;
+    scheduleDeferralBlockedReason?: string;
 }>;
 
 export type ResolverStep = Readonly<{
@@ -49,7 +53,7 @@ export type ResolverResult = Readonly<{
     workflowVersion: string;
     catalogVersion: string;
     policyRevision: string;
-    observed: Readonly<{ state: ResolverObservation["state"] | null; loanType: ResolverObservation["loanType"] | null; evidenceReady: boolean; restoreCancellationAllowed: boolean | null; restoreCancellationBlockedReason: string | null; restoreCancellationStateHash: string | null; paymentBlockers: readonly PaymentWorkflowBlocker[] }>;
+    observed: Readonly<{ state: ResolverObservation["state"] | null; loanType: ResolverObservation["loanType"] | null; evidenceReady: boolean; restoreCancellationAllowed: boolean | null; restoreCancellationBlockedReason: string | null; restoreCancellationStateHash: string | null; paymentBlockers: readonly PaymentWorkflowBlocker[]; scheduleDeferral?: ResolverObservation["scheduleDeferral"]; scheduleDeferralEligible?: boolean; scheduleDeferralBlockedReason?: string }>;
     status: "needs_input" | "next_step" | "confirmation_required" | "blocked" | "refresh_required" | "connection_required";
     nextSteps: readonly ResolverStep[];
     blockers: readonly string[];
@@ -65,7 +69,7 @@ const targetArguments: Readonly<Record<string, TargetArgumentKind>> = Object.fre
     "payment.preview": "payment_intake", "payment.post": "payment_intake", "payment.replacement.inspect": "payment_intake", "payment.replacement.create": "payment_intake", "payment.replacement.duplicate-review.preview": "payment_intake", "payment.evidence-recovery.preview": "payment_intake", "payment.evidence-recovery.execute": "payment_intake", "evidence.prepare": "payment_intake", "evidence.finalize": "payment_intake", "evidence.import-chatgpt-file": "payment_intake",
     "payment.evidence-supplement.import-chatgpt-file": "payment_intake", "payment.evidence-supplement.record": "payment_intake", "loan.disbursement.list": "loan_for_disbursement",
     "loan.disbursement.draft": "loan", "loan.disbursement.evidence.prepare": "loan_disbursement", "loan.disbursement.evidence.finalize": "loan_disbursement", "loan.disbursement.evidence.import-chatgpt-file": "loan_disbursement",
-    "loan.disbursement.post": "loan_disbursement", "loan.settlement.preview": "loan", "loan.activate": "loan", "loan.draft": "borrower", "renewal.preview": "loan", "payment.restore.cancel": "payment_intake",
+    "loan.disbursement.post": "loan_disbursement", "loan.settlement.preview": "loan", "loan.activate": "loan", "loan.draft": "borrower", "renewal.preview": "loan", "payment.restore.cancel": "payment_intake", "loan.schedule.defer": "loan",
 });
 
 const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -77,6 +81,7 @@ const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freez
     "loan.draft": ["borrowerPublicId", "principal", "interestRate", "termMonths", "repaymentType", "startDate"], "loan.activate": ["idempotencyKey"], "loan.settlement.preview": ["asOfDate"], "renewal.preview": ["oldLoanPublicId", "requestedPrincipal"],
     "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "payment.replacement.inspect": ["paymentIntakePublicId"], "payment.replacement.create": ["paymentIntakePublicId", "reason", "idempotencyKey", "expectedStateHash"], "payment.replacement.duplicate-review.preview": ["canonicalPaymentIntakePublicId", "candidatePaymentIntakePublicIds", "reason", "idempotencyKey"], "payment.evidence-recovery.preview": ["sourcePaymentIntakePublicId", "reason", "expectedCount", "reuseEvidence", "idempotencyKey"], "loan.disbursement.list": ["loanPublicId"],
     "payment.restore.cancel": ["expectedStateHash", "reason", "idempotencyKey"],
+    "loan.schedule.defer": ["schedulePublicId", "reason", "idempotencyKey", "confirmed"],
 });
 
 const targetArgumentFields: Readonly<Record<string, string>> = Object.freeze({
@@ -114,7 +119,7 @@ function result(input: ResolverInput, profile: ResolverProfile, status: Resolver
 }
 
 function withObservation(value: ResolverResult, observation: ResolverObservation): ResolverResult {
-    return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true, restoreCancellationAllowed: observation.restoreCancellationAllowed ?? null, restoreCancellationBlockedReason: observation.restoreCancellationBlockedReason ?? null, restoreCancellationStateHash: observation.restoreCancellationStateHash ?? null, paymentBlockers: observation.paymentBlockers ?? [] } };
+    return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true, restoreCancellationAllowed: observation.restoreCancellationAllowed ?? null, restoreCancellationBlockedReason: observation.restoreCancellationBlockedReason ?? null, restoreCancellationStateHash: observation.restoreCancellationStateHash ?? null, paymentBlockers: observation.paymentBlockers ?? [], ...(observation.scheduleDeferral ? { scheduleDeferral: observation.scheduleDeferral } : {}), ...(observation.scheduleDeferralEligible !== undefined ? { scheduleDeferralEligible: observation.scheduleDeferralEligible } : {}), ...(observation.scheduleDeferralBlockedReason ? { scheduleDeferralBlockedReason: observation.scheduleDeferralBlockedReason } : {}) } };
 }
 
 function validTarget(input: ResolverInput) {
@@ -158,6 +163,18 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
     }
     const rule = workflowRule(input.intent);
     if (!rule.profiles.includes(profile.profile)) return withObservation(result(input, profile, "connection_required", [], ["WORKFLOW_REQUIRES_ANOTHER_CONNECTION"]), observation);
+    if (input.intent === "defer_installment") {
+        if (!input.target || input.target.kind !== "loan" || !validTarget(input)) return withObservation(result(input, profile, "needs_input", [], ["EXACT_LOAN_TARGET_REQUIRED"]), observation);
+        if (observation.targetAvailable !== true || observation.identityResolved !== true) return withObservation(result(input, profile, "needs_input", [], ["TARGET_UNAVAILABLE"]), observation);
+        const attachments = input.attachments ?? "unknown";
+        if (attachments === "unknown") return withObservation(result(input, profile, "needs_input", [], ["ATTACHMENT_AVAILABILITY_UNKNOWN"]), observation);
+        if (attachments === "present") return withObservation(result(input, profile, "blocked", [], ["HUMAN_REVIEW_REQUIRED_UNSUPPORTED_ATTACHMENT_TRANSPORT"], ["loan.schedule.defer"]), observation);
+        if (!input.schedulePublicId) return withObservation(result(input, profile, "next_step", [step("loan.inspect-context", input)], ["SCHEDULE_SELECTION_REQUIRED"]), observation);
+        if (observation.scheduleDeferralEligible !== true) return withObservation(result(input, profile, "blocked", [], [observation.scheduleDeferralBlockedReason ?? "SCHEDULE_DEFERRAL_REQUIRES_REVIEW"], ["loan.schedule.defer"]), observation);
+        const defer = step("loan.schedule.defer", input, ["reason", "idempotencyKey", "confirmed"], true);
+        if (!defer) return withObservation(result(input, profile, "connection_required", [], ["SCHEDULE_DEFERRAL_TOOL_UNAVAILABLE"]), observation);
+        return withObservation(result(input, profile, "confirmation_required", [{ ...defer, arguments: { loanPublicId: input.target.publicId, schedulePublicId: input.schedulePublicId } }], [], ["loan.schedule.defer"]), observation);
+    }
     if (!validTarget(input)) return withObservation(result(input, profile, "needs_input", [], ["EXACT_TARGET_REQUIRED"]), observation);
     if (expectedTarget(input.intent) && input.target!.kind !== expectedTarget(input.intent)) return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
     if (input.intent === "originate_loan" && input.target!.kind !== "borrower" && input.target!.kind !== "loan") return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);

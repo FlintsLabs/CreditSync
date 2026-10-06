@@ -1195,6 +1195,9 @@ const workflowResolverOutput = z.object({
             nextAction: z.enum(["identity_review", "evidence_recovery", "continue_successor", "refresh_preview", "reconciliation", "human_investigation"]),
             retryable: z.boolean(),
         }).strict()).max(8),
+        scheduleDeferral: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+        scheduleDeferralEligible: z.boolean().optional(),
+        scheduleDeferralBlockedReason: z.string().max(120).optional(),
     }).strict(),
     status: z.enum(["needs_input", "next_step", "confirmation_required", "blocked", "refresh_required", "connection_required"]),
     nextSteps: z.array(workflowResolverStepOutput).max(3),
@@ -1203,13 +1206,14 @@ const workflowResolverOutput = z.object({
     reevaluateOn: z.enum(["target_change", "evidence_change", "preview_expiry", "version_change"]),
 }).strict();
 const workflowResolverInput = z.object({
-    intent: z.enum(["inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "cancel_payment_restore", "tool_help"]),
+    intent: z.enum(["inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "cancel_payment_restore", "defer_installment", "tool_help"]),
     target: z.object({ kind: z.enum(["borrower", "loan", "payment_intake", "loan_disbursement"]), publicId: uuid }).strict().optional(),
     attachments: z.enum(["none", "present", "unknown"]).optional(),
     expectedAttachmentCount: z.number().int().min(1).max(20).optional(),
     knownWorkflowVersion: z.string().trim().min(1).max(120).optional(),
     knownCatalogVersion: z.string().trim().min(1).max(160).optional(),
     toolName: z.string().trim().min(1).max(120).optional(),
+    schedulePublicId: uuid.optional(),
 }).strict();
 
 export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
@@ -1489,6 +1493,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
         accruals: compositePageOutput(loanAccrualOutput).nullable(),
     }).strict(),
     "loan.payment-start-date.update": loanOutput.extend(writeAuditMetadata).strict(),
+    "loan.schedule.defer": z.object({ loanPublicId: uuid, sourceSchedulePublicId: uuid, replacementSchedulePublicId: uuid, sourceStatus: z.literal("deferred"), replacementInstallmentNo: z.number().int().positive(), replacementDueDate: date, scheduledPrincipal: money, scheduledInterest: money, scheduledFee: money, scheduledTotal: money, auditPublicId: uuid, correlationId: uuid }).strict(),
     "loan.payment-history.list": z.object({
         loanPublicId: uuid,
         items: z.array(loanPaymentHistoryItemOutput),
@@ -1850,6 +1855,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         reason: shortText,
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
+    "loan.schedule.defer": z.object({ loanPublicId: uuid, schedulePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200), confirmed: z.literal(true) }).strict(),
     "loan.payment-history.list": z.object({ loanPublicId: uuid }).strict(),
     "loan.disbursement.draft": z.object({
         loanPublicId: uuid,
@@ -2273,6 +2279,7 @@ const destructiveTools = new Set<McpToolName>([
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
@@ -2322,6 +2329,7 @@ const financialTools = new Set<McpToolName>([
     "payment.allocation-correction.execute",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
@@ -2381,6 +2389,7 @@ const idempotentTools = new Set<McpToolName>([
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
