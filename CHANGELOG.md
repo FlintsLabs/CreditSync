@@ -11,6 +11,10 @@
 
 - Added precise Thai/English installment-deferral search phrases and exact-name precedence after deterministic regression cases exposed missed and noisy matches; metadata-search metrics are documented separately from model tool-choice evaluation.
 
+### Fixed
+
+- Require sanitized trace confirmations to occur before the corresponding financial tool call; reject traces with missing, late, or invalid confirmation positions.
+
 ## v0.4.64 - 2026-10-06
 
 ### Added
