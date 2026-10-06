@@ -160,6 +160,7 @@ import { importChatGptDisbursementEvidence, importChatGptPaymentEvidence, import
 import { extractPaymentBatchStagingItem } from "../services/payment-batch-ocr-service";
 import { inspectLoanContext, matchPaymentContext, resolveAndPortfolio } from "./composite-reads";
 import { resolveWorkflowFromBackend } from "./workflow-resolver-service";
+import { searchToolCatalog, type ToolCatalogSearchInput } from "./tool-catalog-search";
 import { WORKFLOW_VERSION } from "./workflow-registry";
 
 type ToolInput = Record<string, unknown>;
@@ -215,6 +216,12 @@ export function createDefaultMcpToolHandlers(
         (input.__catalogVersion as string | undefined) ?? "mcp-catalog-unknown",
         (input.__workflowVersion as string | undefined) ?? WORKFLOW_VERSION,
     ),
+    "tool.catalog.search": async (_ctx, input) => searchToolCatalog(input as unknown as ToolCatalogSearchInput, {
+        profile: (input.__profile as ToolProfile | undefined) ?? "full",
+        catalogVersion: (input.__catalogVersion as string | undefined) ?? "mcp-catalog-unknown",
+        guidanceVersion: (input.__guidanceVersion as string | undefined) ?? "mcp-guidance-unknown",
+        catalog: (input.__catalog as import("./catalog-types").McpToolDefinition[] | undefined) ?? [],
+    }),
     "borrower.create": (ctx, input) => createBorrower(ctx, input as unknown as BorrowerInput),
     "borrower.update": (ctx, input) => updateBorrower(
         ctx,

@@ -18,7 +18,8 @@ import { MCP_TOOL_NAMES, type McpToolDefinition, type McpToolName, type ToolProf
 import { createHash } from "node:crypto";
 import { decodeCatalogCursor, encodeCatalogCursor, MCP_PAGE_SIZE } from "./catalog-pagination";
 import { WORKFLOW_VERSION } from "./workflow-registry";
-import { describeTool, MCP_SERVER_INSTRUCTIONS } from "./tool-guidance";
+import { describeTool, MCP_SERVER_INSTRUCTIONS, TOOL_GUIDANCE_VERSION } from "./tool-guidance";
+import { searchToolCatalog } from "./tool-catalog-search";
 
 export { MCP_TOOL_NAMES } from "./catalog-types";
 export type { McpToolName, ToolProfile } from "./catalog-types";
@@ -1565,6 +1566,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "system.error-diagnostic.get": z.object({ correlationId: uuid, items: z.array(diagnosticItemOutput).max(100) }).strict(),
     "system.error-diagnostic.list": z.object({ items: z.array(diagnosticItemOutput).max(100), nextCursor: z.string().nullable() }).strict(),
     "workflow.resolve": workflowResolverOutput,
+    "tool.catalog.search": z.object({ profile: z.enum(["full", "core-read", "payments", "loans", "disbursements", "admin"]), catalogVersion: z.string().max(160), guidanceVersion: z.string().max(160), status: z.enum(["matches", "needs_clarification", "no_match", "connection_required", "refresh_required"]), matches: z.array(z.object({ toolName: z.enum(MCP_TOOL_NAMES), purpose: z.string().max(320), domain: z.enum(["borrowers", "payments", "loans", "disbursements", "intermediaries", "funding", "diagnostics", "discovery"]), whenToUse: z.array(z.string().max(320)).max(8), prerequisites: z.array(z.string().max(320)).max(8), sideEffects: z.array(z.string().max(320)).max(8), retrySafety: z.string().max(320), requiresHumanConfirmation: z.boolean(), relatedTools: z.array(z.enum(MCP_TOOL_NAMES)).max(8) }).strict()).max(10), hasMore: z.boolean(), nextCursor: z.string().max(512).nullable(), requiredProfiles: z.array(z.enum(["full", "core-read", "payments", "loans", "disbursements", "admin"])).max(6) }).strict(),
 };
 
 export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
@@ -2107,6 +2109,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         cursor: z.string().trim().min(1).max(300).optional(), limit: z.number().int().min(1).max(100).optional(),
     }).strict(),
     "workflow.resolve": workflowResolverInput,
+    "tool.catalog.search": z.object({ query: z.string().trim().min(1).max(240), limit: z.number().int().min(1).max(10).optional(), cursor: z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/u).optional(), knownCatalogVersion: z.string().trim().min(1).max(160).optional(), knownGuidanceVersion: z.string().trim().min(1).max(160).optional() }).strict(),
 };
 
 const safeErrorSchema = z.object({
@@ -2215,6 +2218,7 @@ const readOnlyTools = new Set<McpToolName>([
     "payment.reverse-with-accrual.preview",
     "payment.reconcile.preflight",
     "workflow.resolve",
+    "tool.catalog.search",
 ]);
 const destructiveTools = new Set<McpToolName>([
     "borrower.update",
@@ -2425,7 +2429,12 @@ function titleFor(toolName: McpToolName) {
     return toolName.split(/[.-]/u).map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(" ");
 }
 
-function completionText(toolName: McpToolName) {
+function completionText(toolName: McpToolName, result?: unknown) {
+    if (toolName === "tool.catalog.search") {
+        const search = result as { status?: string; matches?: Array<{ toolName?: string }> } | undefined;
+        const names = search?.matches?.map((match) => match.toolName).filter((name): name is string => typeof name === "string") ?? [];
+        return `Capability search status: ${search?.status ?? "unknown"}. Candidates: ${names.length ? names.join(", ") : "none"}. No other tool was executed.`;
+    }
     if (toolName === "loan.commission.reverse") return "Loan commission reversal preview completed.";
     const words = toolName.replace(/[.-]/gu, " ");
     return `${words[0]!.toUpperCase()}${words.slice(1)} completed.`;
@@ -2741,6 +2750,8 @@ export async function executeMcpToolCall(
             if (!handler) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
             const result = await handler(toolContext, toolName === "workflow.resolve"
                 ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __workflowVersion: WORKFLOW_VERSION }
+                : toolName === "tool.catalog.search"
+                    ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __guidanceVersion: TOOL_GUIDANCE_VERSION, __catalog: catalog }
                 : handlerInput);
             recordMcpBreadcrumb({ stage: "handler", outcome: "succeeded" });
             const auditPublicIds = requiresAudit ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result }) : undefined;
@@ -2752,7 +2763,7 @@ export async function executeMcpToolCall(
                 ? input.validateToolOutput(toolName, publicOutput)
                 : successOutputSchema(toolName as McpToolName).safeParse(publicOutput);
             if (!structuredContent.success) throw new DomainError("INVALID_TOOL_OUTPUT", "The application service returned data outside the public MCP contract", 422);
-            return { content: [{ type: "text" as const, text: completionText(toolName as McpToolName) }], structuredContent: structuredContent.data };
+            return { content: [{ type: "text" as const, text: completionText(toolName as McpToolName, publicData) }], structuredContent: structuredContent.data };
         } catch (error) {
             const snapshot = currentMcpDiagnosticSnapshot();
             const failedBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "failed" || breadcrumb.outcome === "rejected");

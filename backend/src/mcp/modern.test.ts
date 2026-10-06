@@ -17,12 +17,16 @@ afterEach(async () => {
 });
 
 function startModernServer(
-    observed: { input?: Record<string, unknown>; captureInput?: Record<string, unknown>; captureIdempotency?: string; calls?: number },
+    observed: { input?: Record<string, unknown>; captureInput?: Record<string, unknown>; captureIdempotency?: string; catalogInput?: Record<string, unknown>; calls?: number },
     profiles: readonly ("full" | "core-read")[] = ["full"],
 ) {
     const handlers = Object.fromEntries(MCP_TOOL_NAMES.map((name) => [name, async (ctx: CommandContext, input: Record<string, unknown>) => {
         observed.calls = (observed.calls ?? 0) + 1;
         if (name === "borrower.search") observed.input = input;
+        if (name === "tool.catalog.search") {
+            observed.catalogInput = input;
+            return { profile: input.__profile, catalogVersion: input.__catalogVersion, guidanceVersion: input.__guidanceVersion, status: "matches", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };
+        }
         if (name === "payment.batch.capture") {
             observed.captureInput = input;
             observed.captureIdempotency = ctx.idempotencyKey;
@@ -101,6 +105,19 @@ async function rawRequestAt(baseUrl: string, path: string, body: Record<string, 
 }
 
 describe("MCP 2026 transport adapter", () => {
+    test("catalog search validates closed public input, injects trusted metadata, and returns no audit envelope", async () => {
+        const observed: { catalogInput?: Record<string, unknown>; calls?: number } = {};
+        const baseUrl = startModernServer(observed);
+        const good = await rawRequest(baseUrl, modernEnvelope("tools/call", { name: "tool.catalog.search", arguments: { query: "ค้นหาผู้กู้" } }));
+        expect(good.body.result.structuredContent.data).toMatchObject({ status: "matches", matches: [] });
+        expect(good.body.result.structuredContent).not.toHaveProperty("auditPublicIds");
+        expect(good.body.result.content[0].text).toContain("No other tool was executed");
+        expect(observed.catalogInput).toMatchObject({ query: "ค้นหาผู้กู้", __profile: "full", __catalogVersion: MCP_CATALOG_VERSION });
+        const calls = observed.calls;
+        const spoofed = await rawRequest(baseUrl, modernEnvelope("tools/call", { name: "tool.catalog.search", arguments: { query: "borrower", profile: "admin", tenantId: "spoof", __profile: "admin" } }));
+        expect(spoofed.body.error).toBeDefined();
+        expect(observed.calls).toBe(calls);
+    });
     test("advertises and dispatches read-only workflow resolution through full and curated modern profiles", async () => {
         const baseUrl = startModernServer({}, ["full", "core-read"]);
         const request = modernEnvelope("tools/call", {
@@ -144,7 +161,8 @@ describe("MCP 2026 transport adapter", () => {
     });
 
     test("legacy transport negotiates every SDK-supported protocol version", async () => {
-        const baseUrl = startModernServer({});
+        const observed: { catalogInput?: Record<string, unknown>; calls?: number } = {};
+        const baseUrl = startModernServer(observed);
         const supportedLegacyVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
         for (const protocolVersion of supportedLegacyVersions) {
             const response = await fetch(`${baseUrl}/mcp`, {
@@ -158,6 +176,14 @@ describe("MCP 2026 transport adapter", () => {
             expect(response.status).toBe(200);
             expect(body.result.protocolVersion).toBe(protocolVersion);
         }
+        const legacy = await fetch(`${baseUrl}/mcp`, {
+            method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method: "tools/call", params: { name: "tool.catalog.search", arguments: { query: "ค้นหาผู้กู้" } } }),
+        });
+        expect(legacy.status).toBe(200);
+        const legacyBody = await legacy.json() as Record<string, any>;
+        expect(legacyBody.result.structuredContent.data.status).toBe("matches");
+        expect(observed.catalogInput?.__profile).toBe("full");
     });
 
     test("v2 schema rejects invalid UUID/money/idempotency arguments before the service", async () => {

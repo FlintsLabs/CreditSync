@@ -125,6 +125,26 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
+    test("legacy MCP tool catalog search returns metadata without audit fields and rejects spoofed context", async () => {
+        let calls = 0;
+        const baseUrl = await startServer({ toolHandlers: {
+            "tool.catalog.search": async (_ctx, input) => {
+                calls += 1;
+                return { profile: input.__profile, catalogVersion: input.__catalogVersion, guidanceVersion: "test-guidance", status: "matches", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };
+            },
+        } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const result = await client.callTool({ name: "tool.catalog.search", arguments: { query: "ค้นหาผู้กู้" } });
+        expect(result.isError).not.toBe(true);
+        expect((result.structuredContent as any).data).toMatchObject({ profile: "full", status: "matches" });
+        expect((result.structuredContent as any)).not.toHaveProperty("auditPublicIds");
+        const spoofed = await client.callTool({ name: "tool.catalog.search", arguments: { query: "borrower", profile: "admin" } as any });
+        expect(spoofed.isError).toBe(true);
+        expect(calls).toBe(1);
+        await client.close();
+    });
+
     test("real MCP transport validates malformed tool arguments before handler invocation", async () => {
         let handlerCalls = 0;
         const baseUrl = await startServer({ toolHandlers: {

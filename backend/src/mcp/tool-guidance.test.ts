@@ -37,7 +37,7 @@ describe("MCP tool guidance registry", () => {
         expect(Object.isFrozen(TOOL_GUIDANCE["borrower.search"])).toBe(true);
         expect(Object.isFrozen(TOOL_GUIDANCE["borrower.search"].searchTerms)).toBe(true);
         expect(Object.isFrozen(TOOL_GUIDANCE["borrower.search"].searchTerms.en)).toBe(true);
-        expect(MCP_SERVER_INSTRUCTIONS).not.toContain("tool.catalog.search");
+        expect(MCP_SERVER_INSTRUCTIONS).toContain("tool.catalog.search");
         expect(MCP_SERVER_INSTRUCTIONS).toContain("workflow.resolve");
         expect(describeTool("borrower.search")).toContain(TOOL_GUIDANCE["borrower.search"].purpose);
         for (const name of MCP_TOOL_NAMES) expect(describeTool(name).length).toBeLessThanOrEqual(1_800);

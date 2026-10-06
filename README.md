@@ -8,6 +8,8 @@ Borrower list cards mask Thai national IDs by default. The card's copy action in
 
 CreditSync is a mobile-first loan management system for lenders who need to track funding sources, borrower profiles, loan contracts, repayments, and closing balances in one place.
 
+MCP clients can use the read-only `tool.catalog.search` capability when unsure which tool fits a request. It searches tool guidance metadata only, shows executable candidates from the active profile, and reports when another profile is needed; it does not read borrower records or run a matched tool. Reconnect to the relevant profile explicitly when a search reports `connection_required`.
+
 The stack is built around Bun + Elysia on the backend, React + Vite on the frontend, PostgreSQL for relational data, MinIO for file storage, and Dragonfly for Redis-compatible caching.
 
 ## What This Repo Does

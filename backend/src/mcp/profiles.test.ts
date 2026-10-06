@@ -79,6 +79,15 @@ function modernRequest(method: string, params: Record<string, unknown>) {
 }
 
 describe("MCP catalog and profiles", () => {
+    test("registers profile-aware catalog search as closed-world read-only metadata", () => {
+        const definition = advertisedMcpToolMetadata().find((tool) => tool.name === "tool.catalog.search")!;
+        expect(definition.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+        expect(definition.policy).toEqual({ kind: "read_only", requiresAudit: false });
+        for (const profile of ["full", "core-read", "payments", "loans", "disbursements", "admin"] as const) {
+            expect(toolNamesForProfile(profile)).toContain("tool.catalog.search");
+        }
+        expect(MCP_TOOL_NAMES).toHaveLength(146);
+    });
     test("has one canonical definition for every current tool", () => {
         expect(MCP_TOOL_NAMES).toEqual(expect.arrayContaining([
             "loan.disbursement.evidence.import-chatgpt-file", "borrower.resolve-and-portfolio",

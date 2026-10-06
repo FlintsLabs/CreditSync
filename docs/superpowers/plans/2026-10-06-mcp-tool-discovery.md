@@ -12,7 +12,7 @@ Execution addendum (2026-10-06): The user's later instruction routes active impl
 
 **Spec:** `docs/superpowers/specs/2026-10-06-mcp-tool-discovery-design.md` (read in full before execution).
 
-Status: approved on 2026-10-06; Task 1 complete in commit pending, Tasks 2–6 remain not started.
+Status: approved on 2026-10-06; Tasks 1–2 complete in commits, Tasks 3–6 remain not started.
 
 ## Global Constraints
 
@@ -68,14 +68,14 @@ Status: approved on 2026-10-06; Task 1 complete in commit pending, Tasks 2–6 r
 
 **Interfaces:** export `ToolCatalogSearchInput`, `ToolCatalogSearchResult`, and `searchToolCatalog(input: ToolCatalogSearchInput, context: { profile: ToolProfile; catalogVersion: string; guidanceVersion: string; catalog: readonly McpToolDefinition[] }): ToolCatalogSearchResult`. Search reads supplied immutable metadata; the default handler uses the serving catalog and server-selected context.
 
-- [ ] Write failing tests for exact names, Thai and English capability phrases, multiple plausible tools, unrelated requests, limit boundaries, stable ordering, and absent-profile matches. Assert no borrower reads, audit insertions, persisted previews, or command handler calls.
-- [ ] Add cursor tests for query/profile/catalog/guidance changes, malformed and cyclic/out-of-range offsets, and bounded complete traversal. Unknown queries return `no_match`; an unavailable capability returns empty matches and only appropriate connection/profile guidance.
-- [ ] Run `bun test backend/src/mcp/tool-catalog-search.test.ts` and verify failures describe the missing implementation.
-- [ ] Implement normalization and ranked metadata matching as specified. Keep Thai aliases curated; avoid treating lexical similarity as an automatic borrower/financial decision. Filter actual match names and related names through the active profile.
-- [ ] Register the closed input/output schemas for `tool.catalog.search`; add it to all current profiles as read-only/non-destructive/idempotent/closed-world. Use structured results plus a concise textual summary.
-- [ ] In `executeMcpToolCall`, inject server-selected profile/catalog/workflow context for this metadata handler only after schema validation, as for `workflow.resolve`. Reject attempts to send `profile`, `tenantId`, `__profile`, or execution fields in public input. Add default handler without product REST or a generic executor.
-- [ ] Verify legacy and modern transport calls return schema-valid results, denied malformed inputs never invoke the handler, and no financial/audit envelope is attached to search results.
-- [ ] Update changelog and commit search registration, tests, and public behavior together.
+- [x] Write failing tests for exact names, Thai and English capability phrases, multiple plausible tools, unrelated requests, limit boundaries, stable ordering, and absent-profile matches. Assert no borrower reads, audit insertions, persisted previews, or command handler calls.
+- [x] Add cursor tests for query/profile/catalog/guidance changes, malformed and overflow/out-of-range offsets, and bounded complete traversal. Unknown queries return `no_match`; an unavailable capability returns empty matches and only appropriate connection/profile guidance.
+- [x] Run `bun test backend/src/mcp/tool-catalog-search.test.ts` and verify failures describe the missing implementation.
+- [x] Implement normalization and ranked metadata matching as specified. Keep Thai aliases curated; avoid treating lexical similarity as an automatic borrower/financial decision. Filter actual match names and related names through the active profile.
+- [x] Register the closed input/output schemas for `tool.catalog.search`; add it to all current profiles as read-only/non-destructive/idempotent/closed-world. Use structured results plus a concise textual summary.
+- [x] In `executeMcpToolCall`, inject server-selected profile/catalog/workflow context for this metadata handler only after schema validation, as for `workflow.resolve`. Reject attempts to send `profile`, `tenantId`, `__profile`, or execution fields in public input. Add default handler without product REST or a generic executor.
+- [x] Verify legacy and modern transport calls return schema-valid results, denied malformed inputs never invoke the handler, and no financial/audit envelope is attached to search results.
+- [x] Update changelog and commit search registration, tests, and public behavior together.
 
 ## Task 3: register and safely guide installment deferral
 
