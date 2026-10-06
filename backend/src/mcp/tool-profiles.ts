@@ -63,6 +63,8 @@ const admin = [
     "loan.commission.preview", "loan.commission.list", "loan.commission.calculate", "loan.commission.reverse", "workflow.resolve", "tool.catalog.search",
 ] as const satisfies readonly McpToolName[];
 
+const discovery = ["tool.catalog.search", "workflow.resolve", "borrower.search", "borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context", "intake.get", "funding-source.list"] as const satisfies readonly McpToolName[];
+
 export const TOOL_PROFILES: Readonly<Record<ToolProfile, readonly McpToolName[]>> = Object.freeze({
     full: Object.freeze([...MCP_TOOL_NAMES]),
     "core-read": Object.freeze([...readOnly]),
@@ -70,6 +72,7 @@ export const TOOL_PROFILES: Readonly<Record<ToolProfile, readonly McpToolName[]>
     loans: Object.freeze([...loans]),
     disbursements: Object.freeze([...disbursements]),
     admin: Object.freeze([...admin]),
+    discovery: Object.freeze([...discovery]),
 });
 
 export function toolsForProfile(profile: ToolProfile, catalog: readonly McpToolDefinition[] = []): readonly McpToolDefinition[] {

@@ -14,7 +14,7 @@ Task 1 review policy ruling (2026-10-06): verified service behavior takes preced
 
 **Spec:** `docs/superpowers/specs/2026-10-06-mcp-tool-discovery-design.md` (read in full before execution).
 
-Status: approved on 2026-10-06; Tasks 1–3 complete on the feature branch, Tasks 4–6 remain not started.
+Status: approved on 2026-10-06; Tasks 1–4 complete on the feature branch, Tasks 5–6 remain not started.
 
 ## Global Constraints
 
@@ -102,13 +102,13 @@ Status: approved on 2026-10-06; Tasks 1–3 complete on the feature branch, Task
 
 **Interfaces:** add `ToolProfile = ... | "discovery"`. Named help's optional `toolHelp` uses registry text plus catalog-derived required input names and version. It never supplies a write as an executable next step merely because help was requested.
 
-- [ ] Write profile tests asserting exactly eight names from the spec, all read-only annotations, no mutation handler called on denied writes, and identical pagination/authorization protections across both transport eras.
-- [ ] Add complete named-help coverage for every visible tool. Test no-target help does not read financial data; write help returns documentation and prerequisites without permission; missing/hidden names and stale versions remain explicit stops; related names are filtered.
-- [ ] Test that prior inspect target-state checks and all evidence/duplicate/recovery/renewal/settlement/attachment transport stops remain unchanged. Do not turn `tool_help` into generic operation execution.
-- [ ] Implement the additive profile, mount `/mcp/discovery` with the existing secure default adapter, and include it in benchmark traversal. Keep existing allowlists plus the additions; do not reduce the full endpoint or silently switch existing clients.
-- [ ] Implement bounded optional help with the exact fields from the spec, add optional `knownGuidanceVersion` input, and use the serving catalog to derive required names. Skip domain reads for pure documentation requests while preserving authoritative reads for actual state-aware workflow resolution.
-- [ ] Set `WORKFLOW_VERSION` to `workflow-resolver-1.2.0` and policy revision to an accurate 2026-10-06 discovery/deferral revision. Keep guidance hashing independent and reject obsolete known versions.
-- [ ] Run guidance/search/profile/resolver/server/modern unit tests and affected disposable resolver-service tests. Update changelog and commit the profile/help contract together.
+- [x] Write profile tests asserting exactly eight names from the spec, all read-only annotations, no mutation handler called on denied writes, and identical pagination/authorization protections across both transport eras.
+- [x] Add complete named-help coverage for every visible tool. Test no-target help does not read financial data; write help returns documentation and prerequisites without permission; missing/hidden names and stale versions remain explicit stops; related names are filtered.
+- [x] Test that prior inspect target-state checks and all evidence/duplicate/recovery/renewal/settlement/attachment transport stops remain unchanged. Do not turn `tool_help` into generic operation execution.
+- [x] Implement the additive profile, mount `/mcp/discovery` with the existing secure default adapter, and include it in benchmark traversal. Keep existing allowlists plus the additions; do not reduce the full endpoint or silently switch existing clients.
+- [x] Implement bounded optional help with the exact fields from the spec, add optional `knownGuidanceVersion` input, and use the serving catalog to derive required names. Skip domain reads for pure documentation requests while preserving authoritative reads for actual state-aware workflow resolution.
+- [x] Set `WORKFLOW_VERSION` to `workflow-resolver-1.2.0` and policy revision to an accurate 2026-10-06 discovery/deferral revision. Keep guidance hashing independent and reject obsolete known versions.
+- [x] Run guidance/search/profile/resolver/server/modern unit tests and affected disposable resolver-service tests. Update changelog and commit the profile/help contract together.
 
 ## Task 5: synchronized plugin guidance and honest routing evaluations
 

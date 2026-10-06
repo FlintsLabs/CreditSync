@@ -1,6 +1,8 @@
 import { MCP_TOOL_NAMES, type ToolProfile } from "./catalog-types";
 import { toolIsVisibleInProfile, workflowRule, WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION, WORKFLOW_TOOL_INVENTORY, type WorkflowIntent } from "./workflow-registry";
 import type { PaymentWorkflowBlocker } from "../services/payment-workflow-blockers";
+import { TOOL_GUIDANCE, TOOL_GUIDANCE_VERSION, type ToolGuidance } from "./tool-guidance";
+import type { McpToolDefinition } from "./catalog-types";
 
 const publicIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type WorkflowTargetKind = "borrower" | "loan" | "payment_intake" | "loan_disbursement";
@@ -13,6 +15,7 @@ export type ResolverInput = Readonly<{
     expectedAttachmentCount?: number;
     knownWorkflowVersion?: string;
     knownCatalogVersion?: string;
+    knownGuidanceVersion?: string;
     toolName?: string;
     schedulePublicId?: string;
 }>;
@@ -59,9 +62,10 @@ export type ResolverResult = Readonly<{
     blockers: readonly string[];
     prohibitedTools: readonly string[];
     reevaluateOn: "target_change" | "evidence_change" | "preview_expiry" | "version_change";
+    toolHelp?: Readonly<{ toolName: string; guidanceVersion: string; purpose: string; whenToUse: readonly string[]; prerequisites: readonly string[]; sideEffects: readonly string[]; retrySafety: string; commonErrors: readonly Readonly<{ code: string; recovery: string }>[]; requiresHumanConfirmation: boolean; requiredInputs: readonly string[]; relatedTools: readonly string[] }>;
 }>;
 
-export type ResolverProfile = Readonly<{ profile: ToolProfile; catalogVersion: string; workflowVersion?: string }>;
+export type ResolverProfile = Readonly<{ profile: ToolProfile; catalogVersion: string; workflowVersion?: string; guidanceVersion?: string; catalog?: readonly McpToolDefinition[] }>;
 type TargetArgumentKind = WorkflowTargetKind | "loan_for_disbursement";
 
 const targetArguments: Readonly<Record<string, TargetArgumentKind>> = Object.freeze({
@@ -118,6 +122,18 @@ function result(input: ResolverInput, profile: ResolverProfile, status: Resolver
     };
 }
 
+function helpMetadata(name: string, guidance: ToolGuidance, profile: ToolProfile, catalog?: readonly McpToolDefinition[]) {
+    const schema = catalog?.find((tool) => tool.name === name)?.inputSchema;
+    const required = schema && Array.isArray(schema.required) ? schema.required.filter((value): value is string => typeof value === "string") : [];
+    return {
+        toolName: name, guidanceVersion: TOOL_GUIDANCE_VERSION, purpose: guidance.purpose,
+        whenToUse: guidance.whenToUse, prerequisites: guidance.prerequisites, sideEffects: guidance.sideEffects,
+        retrySafety: guidance.retrySafety, commonErrors: guidance.commonErrors,
+        requiresHumanConfirmation: guidance.requiresHumanConfirmation, requiredInputs: required,
+        relatedTools: guidance.relatedTools.filter((tool) => toolIsVisibleInProfile(tool, profile)),
+    };
+}
+
 function withObservation(value: ResolverResult, observation: ResolverObservation): ResolverResult {
     return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true, restoreCancellationAllowed: observation.restoreCancellationAllowed ?? null, restoreCancellationBlockedReason: observation.restoreCancellationBlockedReason ?? null, restoreCancellationStateHash: observation.restoreCancellationStateHash ?? null, paymentBlockers: observation.paymentBlockers ?? [], ...(observation.scheduleDeferral ? { scheduleDeferral: observation.scheduleDeferral } : {}), ...(observation.scheduleDeferralEligible !== undefined ? { scheduleDeferralEligible: observation.scheduleDeferralEligible } : {}), ...(observation.scheduleDeferralBlockedReason ? { scheduleDeferralBlockedReason: observation.scheduleDeferralBlockedReason } : {}) } };
 }
@@ -143,23 +159,28 @@ function attachmentStep(input: ResolverInput): ResolverStep | null {
 export function resolveWorkflowPolicy(input: ResolverInput, observation: ResolverObservation, profile: ResolverProfile): ResolverResult {
     const base = () => withObservation(result(input, profile, "needs_input", [], []), observation);
     const currentWorkflowVersion = profile.workflowVersion ?? WORKFLOW_VERSION;
+    const currentGuidanceVersion = profile.guidanceVersion ?? TOOL_GUIDANCE_VERSION;
     if (input.knownWorkflowVersion && input.knownWorkflowVersion !== currentWorkflowVersion) return withObservation(result(input, profile, "refresh_required", [], ["WORKFLOW_VERSION_STALE"]), observation);
     if (input.knownCatalogVersion && input.knownCatalogVersion !== profile.catalogVersion) return withObservation(result(input, profile, "refresh_required", [], ["CATALOG_VERSION_STALE"]), observation);
+    if (input.knownGuidanceVersion && input.knownGuidanceVersion !== currentGuidanceVersion) return withObservation(result(input, profile, "refresh_required", [], ["GUIDANCE_VERSION_STALE"]), observation);
     if (input.profile !== profile.profile) return withObservation(result(input, profile, "connection_required", [], ["PROFILE_CONTEXT_MISMATCH"]), observation);
     if (input.intent === "tool_help") {
         if (!input.toolName || !MCP_TOOL_NAMES.includes(input.toolName as never)) return withObservation(result(input, profile, "needs_input", [], ["TOOL_NAME_REQUIRED"]), observation);
         if (!toolIsVisibleInProfile(input.toolName, profile.profile)) return withObservation(result(input, profile, "connection_required", [], ["TOOL_NOT_VISIBLE_ON_PROFILE"]), observation);
         const inventory = WORKFLOW_TOOL_INVENTORY[input.toolName as keyof typeof WORKFLOW_TOOL_INVENTORY];
-        if (!inventory || inventory.workflow !== "inspect") return withObservation(result(input, profile, "needs_input", [], ["TOOL_HELP_REQUIRES_WORKFLOW_RESOLUTION"], [input.toolName]), observation);
+        const guidance = TOOL_GUIDANCE[input.toolName as keyof typeof TOOL_GUIDANCE];
+        if (!inventory || !guidance) return withObservation(result(input, profile, "needs_input", [], ["TOOL_HELP_UNAVAILABLE"], [input.toolName]), observation);
         const targetRequired = targetArguments[input.toolName] !== undefined;
         if (targetRequired && (observation.targetAvailable !== true || observation.identityResolved !== true || (observation.state !== "mutable" && observation.state !== "posted"))) {
-            return withObservation(result(input, profile, "needs_input", [], ["TARGET_REQUIRES_AUTHORITATIVE_READ"]), observation);
+            return withObservation({ ...result(input, profile, "needs_input", [], [input.target ? "TARGET_REQUIRES_AUTHORITATIVE_READ" : "TARGET_REQUIRED_FOR_INSPECTION"]), toolHelp: helpMetadata(input.toolName, guidance, profile.profile, profile.catalog) }, observation);
         }
-        const helpInputs = input.toolName === "borrower.resolve-and-portfolio" && input.target?.kind === "borrower"
-            ? []
-            : requiredInputs[input.toolName] ?? [];
-        const helpStep = step(input.toolName, input, helpInputs);
-        return withObservation(result(input, profile, helpStep ? "next_step" : "needs_input", [helpStep], helpStep ? [] : ["EXACT_TARGET_REQUIRED"]), observation);
+        const servingTool = profile.catalog?.find((tool) => tool.name === input.toolName);
+        const readOnlyInspection = targetRequired && inventory.workflow === "inspect" && (servingTool?.annotations.readOnlyHint ?? guidance.sideEffects.length === 0);
+        const inspect = readOnlyInspection ? step(input.toolName, input, input.toolName === "borrower.resolve-and-portfolio" && input.target?.kind === "borrower" ? [] : undefined) : null;
+        const documentationOnly = servingTool?.annotations.readOnlyHint ?? guidance.sideEffects.length === 0;
+        const requiresResolution = !documentationOnly && inventory.workflow !== "inspect";
+        const blockers = requiresResolution ? ["TOOL_HELP_REQUIRES_WORKFLOW_RESOLUTION"] : [];
+        return withObservation({ ...result(input, profile, inspect ? "next_step" : "needs_input", [inspect], blockers, requiresResolution ? [input.toolName] : []), toolHelp: helpMetadata(input.toolName, guidance, profile.profile, profile.catalog) }, observation);
     }
     const rule = workflowRule(input.intent);
     if (!rule.profiles.includes(profile.profile)) return withObservation(result(input, profile, "connection_required", [], ["WORKFLOW_REQUIRES_ANOTHER_CONNECTION"]), observation);

@@ -32,7 +32,7 @@ export const MCP_TOOL_NAMES = [
 ] as const;
 
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
-export type ToolProfile = "full" | "core-read" | "payments" | "loans" | "disbursements" | "admin";
+export type ToolProfile = "full" | "core-read" | "payments" | "loans" | "disbursements" | "admin" | "discovery";
 
 export type McpToolDefinition<Name extends string = McpToolName> = Readonly<{
     name: Name;

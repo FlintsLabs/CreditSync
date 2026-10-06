@@ -1199,6 +1199,12 @@ const workflowResolverOutput = z.object({
         scheduleDeferralEligible: z.boolean().optional(),
         scheduleDeferralBlockedReason: z.string().max(120).optional(),
     }).strict(),
+    toolHelp: z.object({
+        toolName: z.string().trim().min(1).max(120), guidanceVersion: z.string().trim().min(1).max(120), purpose: z.string(),
+        whenToUse: z.array(z.string()), prerequisites: z.array(z.string()), sideEffects: z.array(z.string()), retrySafety: z.string(),
+        commonErrors: z.array(z.object({ code: z.string(), recovery: z.string() }).strict()), requiresHumanConfirmation: z.boolean(),
+        requiredInputs: z.array(z.string()), relatedTools: z.array(z.string()),
+    }).strict().optional(),
     status: z.enum(["needs_input", "next_step", "confirmation_required", "blocked", "refresh_required", "connection_required"]),
     nextSteps: z.array(workflowResolverStepOutput).max(3),
     blockers: z.array(z.string().trim().min(1).max(160)).max(8),
@@ -1212,6 +1218,7 @@ const workflowResolverInput = z.object({
     expectedAttachmentCount: z.number().int().min(1).max(20).optional(),
     knownWorkflowVersion: z.string().trim().min(1).max(120).optional(),
     knownCatalogVersion: z.string().trim().min(1).max(160).optional(),
+    knownGuidanceVersion: z.string().trim().min(1).max(120).optional(),
     toolName: z.string().trim().min(1).max(120).optional(),
     schedulePublicId: uuid.optional(),
 }).strict();
@@ -2757,7 +2764,7 @@ export async function executeMcpToolCall(
             const handler = input.handlers[toolName];
             if (!handler) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
             const result = await handler(toolContext, toolName === "workflow.resolve"
-                ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __workflowVersion: WORKFLOW_VERSION }
+                ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __workflowVersion: WORKFLOW_VERSION, __guidanceVersion: TOOL_GUIDANCE_VERSION, __catalog: catalog }
                 : toolName === "tool.catalog.search"
                     ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __guidanceVersion: TOOL_GUIDANCE_VERSION, __catalog: TOOL_CATALOG }
                     : handlerInput);

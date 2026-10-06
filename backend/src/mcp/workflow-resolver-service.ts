@@ -126,9 +126,9 @@ async function disbursementObservation(ctx: CommandContext, publicId: string): P
     return { targetAvailable: true, identityResolved: true, state: event.status === "draft" ? "mutable" : "posted", loanType: loan.repaymentType === "floating" ? "floating" : "scheduled", evidenceRequired: summary.required, evidenceReady: summary.ready && !summary.overflow, pendingEvidenceCount: summary.pending, rejectedEvidenceCount: summary.rejected, evidenceOverflow: summary.overflow };
 }
 
-export async function resolveWorkflowFromBackend(ctx: CommandContext, input: ResolverWireInput, profile: ToolProfile, catalogVersion: string, workflowVersion: string) {
+export async function resolveWorkflowFromBackend(ctx: CommandContext, input: ResolverWireInput, profile: ToolProfile, catalogVersion: string, workflowVersion: string, guidanceVersion?: string, catalog: readonly import("./catalog-types").McpToolDefinition[] = []) {
     let observation: ResolverObservation = {};
-    if (input.target) {
+    if (input.target && !(input.intent === "tool_help" && !input.toolName)) {
         if (input.target.kind === "payment_intake") observation = await paymentObservation(ctx, input.target.publicId);
         else if (input.target.kind === "loan") observation = await loanObservation(ctx, input.target.publicId);
         else if (input.target.kind === "loan_disbursement") observation = await disbursementObservation(ctx, input.target.publicId);
@@ -149,5 +149,5 @@ export async function resolveWorkflowFromBackend(ctx: CommandContext, input: Res
                 : { scheduleDeferralBlockedReason: inspection.blockedReason }),
         };
     }
-    return resolveWorkflowPolicy({ ...input, profile }, observation, { profile, catalogVersion, workflowVersion } satisfies ResolverProfile);
+    return resolveWorkflowPolicy({ ...input, profile }, observation, { profile, catalogVersion, workflowVersion, guidanceVersion, catalog } satisfies ResolverProfile);
 }

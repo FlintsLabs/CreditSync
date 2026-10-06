@@ -18,7 +18,7 @@ afterEach(async () => {
 
 function startModernServer(
     observed: { input?: Record<string, unknown>; captureInput?: Record<string, unknown>; captureIdempotency?: string; catalogInput?: Record<string, unknown>; calls?: number; auditLookups?: number },
-    profiles: readonly ("full" | "core-read")[] = ["full"],
+    profiles: readonly ("full" | "core-read" | "discovery")[] = ["full"],
 ) {
     const handlers = Object.fromEntries(MCP_TOOL_NAMES.map((name) => [name, async (ctx: CommandContext, input: Record<string, unknown>) => {
         observed.calls = (observed.calls ?? 0) + 1;
@@ -287,6 +287,26 @@ describe("MCP 2026 transport adapter", () => {
         expect(full.response.status).toBe(200);
         expect(full.body.result.tools).toHaveLength(MCP_TOOL_NAMES.length);
         expect(full.body.result.nextCursor).toBeUndefined();
+    });
+
+    test("discovery is the same exact eight-tool read-only profile over both protocol adapters", async () => {
+        const observed: { calls?: number } = {};
+        const baseUrl = startModernServer(observed, ["discovery"]);
+        for (const modern of [true, false]) {
+            const first = modern
+                ? await rawRequestAt(baseUrl, "/mcp/discovery", modernEnvelope("tools/list"))
+                : await (async () => {
+                    const response = await fetch(`${baseUrl}/mcp/discovery`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }) });
+                    return { response, body: await response.json() as Record<string, any> };
+                })();
+            expect(first.response.status).toBe(200);
+            expect(first.body.result.tools.map((tool: { name: string }) => tool.name)).toEqual(toolNamesForProfile("discovery"));
+            expect(first.body.result.nextCursor).toBeUndefined();
+            expect(first.body.result.tools.every((tool: { annotations: { readOnlyHint: boolean } }) => tool.annotations.readOnlyHint)).toBe(true);
+        }
+        const denied = await rawRequestAt(baseUrl, "/mcp/discovery", modernEnvelope("tools/call", { name: "payment.post", arguments: {} }));
+        expect(denied.body.error).toBeDefined();
+        expect(observed.calls ?? 0).toBe(0);
     });
 
     test("modern envelope, version, and standard-header validation reject before dispatch", async () => {

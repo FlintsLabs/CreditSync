@@ -217,6 +217,8 @@ export function createDefaultMcpToolHandlers(
         (input.__profile as ToolProfile | undefined) ?? "full",
         (input.__catalogVersion as string | undefined) ?? "mcp-catalog-unknown",
         (input.__workflowVersion as string | undefined) ?? WORKFLOW_VERSION,
+        (input.__guidanceVersion as string | undefined) ?? undefined,
+        (input.__catalog as import("./catalog-types").McpToolDefinition[] | undefined) ?? [],
     ),
     "tool.catalog.search": async (_ctx, input) => searchToolCatalog(input as unknown as ToolCatalogSearchInput, {
         profile: (input.__profile as ToolProfile | undefined) ?? "full",

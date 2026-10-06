@@ -83,15 +83,22 @@ describe("MCP catalog and profiles", () => {
         const definition = advertisedMcpToolMetadata().find((tool) => tool.name === "tool.catalog.search")!;
         expect(definition.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
         expect(definition.policy).toEqual({ kind: "read_only", requiresAudit: false });
-        for (const profile of ["full", "core-read", "payments", "loans", "disbursements", "admin"] as const) {
+        for (const profile of ["full", "core-read", "payments", "loans", "disbursements", "admin", "discovery"] as const) {
             expect(toolNamesForProfile(profile)).toContain("tool.catalog.search");
         }
         expect(MCP_TOOL_NAMES).toHaveLength(147);
         expect(toolNamesForProfile("core-read")).toHaveLength(38);
+        expect(Object.fromEntries(Object.entries(TOOL_PROFILES).map(([profile, names]) => [profile, names.length]))).toEqual({ full: 147, "core-read": 38, payments: 68, loans: 47, disbursements: 42, admin: 37, discovery: 8 });
         expect(toolNamesForProfile("core-read")).not.toContain("loan.cancel.preview");
         const cancellationPreview = catalogByName.get("loan.cancel.preview")!;
         expect(cancellationPreview.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false });
         expect(cancellationPreview.policy).toEqual({ kind: "mutating", requiresAudit: false });
+        expect(toolNamesForProfile("discovery")).toEqual([
+            "tool.catalog.search", "workflow.resolve", "borrower.search", "borrower.resolve-and-portfolio",
+            "loan.inspect-context", "payment.match-context", "intake.get", "funding-source.list",
+        ]);
+        expect(toolNamesForProfile("discovery")).toHaveLength(8);
+        expect(toolsForProfile("discovery", catalog).every((tool) => tool.annotations.readOnlyHint && tool.policy.kind === "read_only")).toBe(true);
     });
     test("has one canonical definition for every current tool", () => {
         expect(MCP_TOOL_NAMES).toEqual(expect.arrayContaining([
@@ -145,7 +152,7 @@ describe("MCP catalog and profiles", () => {
                 return outputFixture(name);
             }) satisfies McpToolHandler])) as Record<string, McpToolHandler>;
             const app = new Elysia();
-            for (const profile of ["core-read", "payments", "loans", "disbursements", "admin"] as const) {
+            for (const profile of ["core-read", "payments", "loans", "disbursements", "admin", "discovery"] as const) {
                 app.use(createMcpHttpPlugin({
                     config: { tokenHashes: [tokenHash], allowedHosts: ["profile.test"], tenantId: "profile-test-tenant", actorEmail: "profile@example.test", rateLimitMax: 100, rateLimitWindowSeconds: 60, allowedOrigins: [] },
                     profile, handlers,
@@ -208,6 +215,14 @@ describe("MCP catalog and profiles", () => {
         expect(denied.status).toBe(200);
         expect((await denied.json() as Record<string, any>).error?.code).toBe(-32602);
         expect(calls.filter((name) => name === "payment.post")).toHaveLength(1);
+        const beforeDiscoveryDenial = calls.length;
+        const deniedDiscovery = await app.handle(new Request("http://profile.test/mcp/discovery", {
+            method: "POST", headers: { host: "profile.test", authorization: `Bearer ${PROFILE_TEST_TOKEN}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "payment.post", arguments: { paymentIntakePublicId: PROFILE_TEST_UUID, proposalPublicId: PROFILE_TEST_UUID } } }),
+        }));
+        expect(deniedDiscovery.status).toBe(200);
+        expect((await deniedDiscovery.json() as Record<string, any>).error?.code).toBe(-32602);
+        expect(calls).toHaveLength(beforeDiscoveryDenial);
     });
 
     test("core-read cannot expose mutation or open-world imports", () => {

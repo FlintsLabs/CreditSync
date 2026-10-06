@@ -3,10 +3,11 @@ import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, ty
 import { MCP_TOOL_NAMES } from "./catalog-types";
 import { toolIsVisibleInProfile, WORKFLOW_REGISTRY, WORKFLOW_TOOL_INVENTORY, WORKFLOW_VERSION } from "./workflow-registry";
 import { advertisedMcpToolMetadata, toolDataSchemas, toolInputSchemas } from "./server";
+import { toolNamesForProfile } from "./tool-profiles";
 
 const catalogVersion = "mcp-catalog-test";
 const target = { kind: "payment_intake" as const, publicId: "0198c481-3e2b-7000-8000-000000000001" };
-const base = { profile: "payments" as const, catalogVersion, workflowVersion: WORKFLOW_VERSION };
+const base = { profile: "payments" as const, catalogVersion, workflowVersion: WORKFLOW_VERSION, catalog: advertisedMcpToolMetadata() };
 
 describe("workflow resolver policy", () => {
     test("deferral asks for an exact schedule, then returns review data and confirmation inputs without confirming", () => {
@@ -223,13 +224,43 @@ describe("workflow resolver policy", () => {
         expect(resolved.nextSteps.every((step) => Object.values(step.arguments).every((value) => value === target.publicId))).toBe(true);
     });
 
-    test("provides bounded inspect guidance and refuses arbitrary financial tool help", () => {
+    test("provides inspect guidance and complete documentation for visible write tools without executable steps", () => {
         const inspect = resolveWorkflowPolicy({ intent: "inspect", ...base, target, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable" }, base);
         expect(inspect).toMatchObject({ status: "next_step", nextSteps: [{ toolName: "intake.get", arguments: { paymentIntakePublicId: target.publicId } }] });
         const help = resolveWorkflowPolicy({ intent: "tool_help", ...base, target, toolName: "payment.post" }, { targetAvailable: true, identityResolved: true, state: "mutable" }, base);
         expect(help.status).toBe("needs_input");
         expect(help.nextSteps).toHaveLength(0);
-        expect(help.prohibitedTools).toContain("payment.post");
+        expect(help.toolHelp).toMatchObject({ toolName: "payment.post", requiresHumanConfirmation: true, requiredInputs: ["paymentIntakePublicId", "proposalPublicId"] });
+        expect(Object.keys(help.toolHelp!)).toEqual(["toolName", "guidanceVersion", "purpose", "whenToUse", "prerequisites", "sideEffects", "retrySafety", "commonErrors", "requiresHumanConfirmation", "requiredInputs", "relatedTools"]);
+        expect(help.nextSteps).toHaveLength(0);
+    });
+
+    test("returns named documentation for every visible discovery tool and rejects stale help versions", () => {
+        const names = toolNamesForProfile("discovery");
+        const catalog = advertisedMcpToolMetadata();
+        for (const name of names) {
+            const resolved = resolveWorkflowPolicy({ intent: "tool_help", profile: "discovery", toolName: name }, {}, { profile: "discovery", catalogVersion, catalog });
+            expect(resolved.toolHelp?.toolName).toBe(name);
+            expect(resolved.toolHelp?.relatedTools.every((related) => names.includes(related as typeof name))).toBe(true);
+        }
+        const stale = resolveWorkflowPolicy({ intent: "tool_help", profile: "discovery", toolName: "tool.catalog.search", knownGuidanceVersion: "old" }, {}, { profile: "discovery", catalogVersion, catalog });
+        expect(stale).toMatchObject({ status: "refresh_required", nextSteps: [], blockers: ["GUIDANCE_VERSION_STALE"] });
+        expect(stale.toolHelp).toBeUndefined();
+    });
+
+    test("every catalog tool visible on every profile has complete filtered named help", () => {
+        const catalog = advertisedMcpToolMetadata();
+        for (const profile of ["full", "core-read", "payments", "loans", "disbursements", "admin", "discovery"] as const) {
+            const visible = toolNamesForProfile(profile);
+            for (const toolName of visible) {
+                const help = resolveWorkflowPolicy({ intent: "tool_help", profile, toolName }, {}, { profile, catalogVersion, catalog });
+                expect(help.toolHelp?.toolName).toBe(toolName);
+                const required = catalog.find((tool) => tool.name === toolName)!.inputSchema.required as string[] | undefined;
+                expect(help.toolHelp?.requiredInputs).toEqual(required ?? []);
+                expect(help.toolHelp?.relatedTools.every((related) => visible.includes(related as typeof toolName))).toBe(true);
+                expect(help.toolHelp?.purpose.length).toBeGreaterThan(0);
+            }
+        }
     });
 
     test("uses the target-bound borrower resolver input without a query", () => {
