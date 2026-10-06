@@ -10,6 +10,7 @@
 ### Fixed
 
 - Reject valid catalog cursors whose offset is outside the ranked result set before profile filtering can return a connection hint.
+- Keep the ignored MCP discovery progress ledger local instead of tracking it in Git.
 - Corrected the persisted, non-idempotent `loan.cancel.preview` MCP policy and guidance; tightened capability search cursor validation, bounded contracts, high-risk Thai/English ranking, hidden-profile handling, and transport spoof/audit regressions. Corrected conditional evidence-recovery, payment-date confirmation, funding retry/source, and intermediary attribution guidance.
 
 ## v0.4.63 - 2026-09-25
