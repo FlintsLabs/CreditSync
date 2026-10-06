@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
+import { invalidateTenantCache } from "../lib/cache";
 import { auditLogs, users } from "../db/schema";
 import { getMcpDiagnosticTrace, listMcpDiagnostics, persistMcpDiagnosticBestEffort } from "../services/mcp-diagnostic-service";
 import {
@@ -161,6 +162,7 @@ import { extractPaymentBatchStagingItem } from "../services/payment-batch-ocr-se
 import { inspectLoanContext, matchPaymentContext, resolveAndPortfolio } from "./composite-reads";
 import { resolveWorkflowFromBackend } from "./workflow-resolver-service";
 import { WORKFLOW_VERSION } from "./workflow-registry";
+import { deferLoanSchedule } from "../services/loan-schedule-deferral-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -488,6 +490,15 @@ export function createDefaultMcpToolHandlers(
         paymentStartDate: asString(input, "paymentStartDate"),
         reason: asString(input, "reason"),
     }),
+    "loan.schedule.defer": async (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Schedule deferrals require an idempotency key", 400);
+        const result = await deferLoanSchedule({ ...ctx, idempotencyKey }, asString(input, "loanPublicId"), asString(input, "schedulePublicId"), {
+            reason: asString(input, "reason"),
+        });
+        await invalidateTenantCache(ctx.tenantId);
+        return result;
+    },
     "loan.interest-rate.list": (ctx, input) => listLoanInterestRates(ctx, asString(input, "loanPublicId")),
     "loan.interest-rate.preview": (ctx, input) => previewLoanInterestRateChange(ctx, asString(input, "loanPublicId"), {
         effectiveDate: asString(input, "effectiveDate"),
@@ -752,6 +763,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.restore.schedule-backfill": { entityType: "loan_schedule", action: "restore_schedule_backfilled" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
+    "loan.schedule.defer": { entityType: "loan_schedule_deferral", action: "deferred" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
     "loan.settlement.execute": { entityType: "loan_settlement", action: "executed" },
     "loan.settlement.reverse": { entityType: "loan_settlement", action: "reversed" },

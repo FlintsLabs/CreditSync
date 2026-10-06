@@ -15,6 +15,7 @@ import {
     loanDisbursements,
     loanInterestRatePeriods,
     loanSchedules,
+    loanScheduleDeferrals,
     loans,
     files,
     intermediaries,
@@ -142,6 +143,118 @@ function expectWriteAuditMetadata(data: Record<string, unknown>) {
 }
 
 describe("default MCP adapter integration", () => {
+    integrationTest("defers a fully unpaid installment through MCP with one replacement and audit metadata", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP schedule deferral borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "200.00", interestRate: "0.00",
+            repaymentType: "daily", termMonths: 1, installmentAmount: "100.00", totalInstallments: 2, startDate: "2026-08-09",
+            outstandingPrincipal: "200.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const source = await db.insert(loanSchedules).values({
+            tenantId: TENANT_ID, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-10", scheduledPrincipal: "90.00",
+            scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00", remainingDue: "100.00", status: "pending",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanSchedules).values({ tenantId: TENANT_ID, loanId: loan.id, installmentNo: 2, dueDate: "2026-08-11", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", remainingDue: "100.00", status: "pending" });
+        const { client } = await startDefaultServer();
+        const args = { loanPublicId: loan.publicId, schedulePublicId: source.publicId, reason: "Borrower requested a one day deferral", confirmed: true, idempotencyKey: `mcp-deferral-${crypto.randomUUID()}` };
+        const first = resultData(await client.callTool({ name: "loan.schedule.defer", arguments: args }));
+        const replay = resultData(await client.callTool({ name: "loan.schedule.defer", arguments: args }));
+        expect(first.data).toMatchObject({
+            sourceSchedulePublicId: (replay.data as any).sourceSchedulePublicId,
+            replacementSchedulePublicId: (replay.data as any).replacementSchedulePublicId,
+            auditPublicId: (replay.data as any).auditPublicId,
+        });
+        const conflict = await client.callTool({ name: "loan.schedule.defer", arguments: { ...args, reason: "Changed request" } });
+        expect(conflict.isError).toBe(true);
+        expect((conflict.structuredContent as any)?.error?.code).toBe("IDEMPOTENCY_CONFLICT");
+        expect(first.data).toMatchObject({
+            loanPublicId: loan.publicId, sourceSchedulePublicId: source.publicId, sourceStatus: "deferred",
+            replacementInstallmentNo: 3, replacementDueDate: "2026-08-12", scheduledPrincipal: "90.00",
+            scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00",
+        });
+        expectWriteAuditMetadata(first.data);
+        const persistedSource = await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, source.id) });
+        expect(persistedSource).toMatchObject({ status: "deferred", dueDate: "2026-08-10", scheduledPrincipal: "90.00", scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00", remainingDue: "0.00" });
+        expect(await db.select().from(loanScheduleDeferrals).where(eq(loanScheduleDeferrals.loanId, loan.id))).toHaveLength(1);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, loan.id))).toHaveLength(3);
+        const deferral = await db.query.loanScheduleDeferrals.findFirst({ where: eq(loanScheduleDeferrals.idempotencyKey, args.idempotencyKey) });
+        const audit = await db.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, TENANT_ID), eq(auditLogs.entityId, deferral!.publicId), eq(auditLogs.action, "deferred")) });
+        expect(audit).toMatchObject({ entityType: "loan_schedule_deferral", action: "deferred", publicId: (first.data as any).auditPublicId });
+
+        const partialLoan = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00",
+            repaymentType: "daily", termMonths: 1, installmentAmount: "100.00", totalInstallments: 1, startDate: "2026-08-09",
+            outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const partialSchedule = await db.insert(loanSchedules).values({
+            tenantId: TENANT_ID, loanId: partialLoan.id, installmentNo: 1, dueDate: "2026-08-10", scheduledPrincipal: "100.00",
+            scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", remainingDue: "100.00", status: "pending",
+        }).returning().then((rows) => rows[0]!);
+        await client.callTool({ name: "loan.contract.get", arguments: { loanPublicId: partialLoan.publicId } });
+        await db.update(loanSchedules).set({ paidTotal: "10.00", remainingDue: "90.00", status: "partial" }).where(eq(loanSchedules.id, partialSchedule.id));
+        const rejected = await client.callTool({ name: "loan.schedule.defer", arguments: {
+            loanPublicId: partialLoan.publicId, schedulePublicId: partialSchedule.publicId, reason: "Must remain unpaid", confirmed: true,
+            idempotencyKey: `mcp-deferral-partial-${crypto.randomUUID()}`,
+        } });
+        expect(rejected.isError).toBe(true);
+        expect((rejected.structuredContent as any)?.error?.code).toBe("SCHEDULE_NOT_ELIGIBLE");
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, partialSchedule.id) })).toMatchObject({ status: "partial", paidTotal: "10.00", remainingDue: "90.00" });
+        expect(await db.select().from(loanScheduleDeferrals).where(eq(loanScheduleDeferrals.loanId, partialLoan.id))).toHaveLength(0);
+        await client.close();
+    });
+
+    integrationTest("rejects paid, deferred, floating, inactive, and tenant-inaccessible schedule deferrals", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP deferral rejection borrower" }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+        const createCase = async (input: { tenantId?: string; ownerUserId?: number; borrowerId?: number; repaymentType?: "daily" | "floating"; loanStatus?: string; scheduleStatus?: string; paidTotal?: string; remainingDue?: string }) => {
+            const loan = await db.insert(loans).values({
+                tenantId: input.tenantId ?? TENANT_ID, ownerUserId: input.ownerUserId ?? actor.id, borrowerId: input.borrowerId ?? borrower.id,
+                principalAmount: "100.00", interestRate: "0.00", repaymentType: input.repaymentType ?? "daily", termMonths: 1,
+                floatingAccrualCycle: input.repaymentType === "floating" ? "daily" : null,
+                firstDayTreatment: input.repaymentType === "floating" ? "start_next_day" : null,
+                interestStartDate: input.repaymentType === "floating" ? "2026-08-09" : null,
+                installmentAmount: "100.00", totalInstallments: 1, startDate: "2026-08-09", outstandingPrincipal: "100.00",
+                outstandingInterest: "0.00", outstandingFees: "0.00", status: input.loanStatus ?? "active",
+            }).returning().then((rows) => rows[0]!);
+            const schedule = await db.insert(loanSchedules).values({
+                tenantId: input.tenantId ?? TENANT_ID, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-10",
+                scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00",
+                paidTotal: input.paidTotal ?? "0.00", remainingDue: input.remainingDue ?? "100.00", status: input.scheduleStatus ?? "pending",
+            }).returning().then((rows) => rows[0]!);
+            return { loan, schedule };
+        };
+        const cases = [
+            { name: "paid", fixture: await createCase({ scheduleStatus: "paid", paidTotal: "100.00", remainingDue: "0.00" }), code: "SCHEDULE_NOT_ELIGIBLE" },
+            { name: "deferred", fixture: await createCase({ scheduleStatus: "deferred", remainingDue: "0.00" }), code: "SCHEDULE_NOT_ELIGIBLE" },
+            { name: "floating", fixture: await createCase({ repaymentType: "floating" }), code: "INVALID_LOAN_TERMS" },
+            { name: "inactive", fixture: await createCase({ loanStatus: "closed" }), code: "INVALID_LOAN_TERMS" },
+        ];
+        const foreignTenant = "tenant-mcp-deferral-foreign";
+        const foreignActor = await db.insert(users).values({ tenantId: foreignTenant, email: "foreign-deferral@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const foreignBorrower = await db.insert(borrowers).values({ tenantId: foreignTenant, ownerUserId: foreignActor.id, name: "Foreign deferral borrower" }).returning().then((rows) => rows[0]!);
+        const inaccessible = await createCase({ tenantId: foreignTenant, ownerUserId: foreignActor.id, borrowerId: foreignBorrower.id });
+
+        for (const entry of cases) {
+            const result = await client.callTool({ name: "loan.schedule.defer", arguments: {
+                loanPublicId: entry.fixture.loan.publicId, schedulePublicId: entry.fixture.schedule.publicId,
+                reason: `Reject ${entry.name} schedule`, confirmed: true, idempotencyKey: `mcp-deferral-reject-${entry.name}-${crypto.randomUUID()}`,
+            } });
+            expect(result.isError).toBe(true);
+            expect((result.structuredContent as any)?.error?.code).toBe(entry.code);
+            expect(await db.select().from(loanScheduleDeferrals).where(eq(loanScheduleDeferrals.loanId, entry.fixture.loan.id))).toHaveLength(0);
+        }
+        const inaccessibleResult = await client.callTool({ name: "loan.schedule.defer", arguments: {
+            loanPublicId: inaccessible.loan.publicId, schedulePublicId: inaccessible.schedule.publicId,
+            reason: "Reject tenant-inaccessible loan", confirmed: true, idempotencyKey: `mcp-deferral-inaccessible-${crypto.randomUUID()}`,
+        } });
+        expect(inaccessibleResult.isError).toBe(true);
+        expect((inaccessibleResult.structuredContent as any)?.error?.code).toBe("LOAN_NOT_FOUND");
+        expect(await db.select().from(loanScheduleDeferrals).where(eq(loanScheduleDeferrals.loanId, inaccessible.loan.id))).toHaveLength(0);
+        await client.close();
+    });
+
     test("derives a stable idempotency key for payment reversals when callers omit one", () => {
         const context = paymentReverseCommandContext({
             tenantId: TENANT_ID,
@@ -2147,7 +2260,7 @@ describe("default MCP adapter integration", () => {
             "payment.batch.split", "payment.batch.decision", "payment.batch.cancel", "payment.batch.staging.extract",
         ]);
         const separatelyCoveredReflowTools = new Set<McpToolName>([
-            "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute", "payment.restore.cancel",
+            "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute", "payment.restore.cancel", "loan.schedule.defer",
         ]);
         expect([...new Set(called)].sort()).toEqual(MCP_TOOL_NAMES.filter((name) => !resumableBatchTools.has(name) && !separatelyCoveredReflowTools.has(name)).sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size);

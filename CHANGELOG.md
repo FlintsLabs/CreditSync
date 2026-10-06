@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.65 - 2026-10-06
+
+### Added
+
+- Exposed explicitly confirmed, idempotent loan schedule installment deferral through the audited MCP command; deferral reuses the existing service and does not record a payment.
+
 ## v0.4.64 - 2026-10-06
 
 ### Added

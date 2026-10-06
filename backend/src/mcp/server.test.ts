@@ -125,6 +125,31 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
+    test("advertises schedule deferral as a closed, confirmed financial command", async () => {
+        const metadata = advertisedMcpToolMetadata().find((tool) => tool.name === "loan.schedule.defer");
+        expect(metadata).toBeDefined();
+        expect(metadata!.inputSchema).toMatchObject({ additionalProperties: false, required: expect.arrayContaining(["loanPublicId", "schedulePublicId", "reason", "confirmed", "idempotencyKey"]) });
+        expect((metadata!.inputSchema.properties as Record<string, any>).confirmed).toMatchObject({ const: true });
+        expect(metadata!.outputSchema).toMatchObject({ additionalProperties: false });
+        expect(metadata!.annotations).toEqual({ title: expect.any(String), readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+        expect(metadata!.policy).toEqual({ kind: "financial", requiresAudit: true });
+
+        let calls = 0;
+        const baseUrl = await startServer({ toolHandlers: { "loan.schedule.defer": async () => { calls += 1; return {}; } } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        for (const arguments_ of [
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", idempotencyKey: "defer-key" },
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", confirmed: false, idempotencyKey: "defer-key" },
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", confirmed: true, idempotencyKey: "defer-key", extra: true },
+        ]) {
+            const result = await client.callTool({ name: "loan.schedule.defer", arguments: arguments_ });
+            expect(result.isError).toBe(true);
+        }
+        expect(calls).toBe(0);
+        await client.close();
+    });
+
     test("real MCP transport validates malformed tool arguments before handler invocation", async () => {
         let handlerCalls = 0;
         const baseUrl = await startServer({ toolHandlers: {
@@ -211,7 +236,7 @@ describe("CreditSync stateless MCP contract", () => {
         } });
         expect(floating.isError).not.toBe(true);
         await client.close();
-    });
+    }, 10_000);
     // Break caught: frontend, backend parsing, REST, and MCP enforce different public-money lengths or round the shared maximum.
     test("keeps every public boundary on the 32-character unsigned money contract", async () => {
         const maximum = "99999999999999999999999999999.99";
@@ -1065,6 +1090,7 @@ describe("CreditSync stateless MCP contract", () => {
             "loan.cancel.execute",
             "loan.replacement.execute",
             "loan.replacement.reverse",
+            "loan.schedule.defer",
             "loan.disbursement.update",
             "loan.disbursement.post",
             "loan.disbursement.reverse",

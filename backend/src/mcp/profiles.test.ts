@@ -115,6 +115,11 @@ describe("MCP catalog and profiles", () => {
         has("admin", "system.error-diagnostic.get", "system.error-diagnostic.list", "funding-source.list", "funding-allocation.list", "loan.commission.list", "loan.commission.calculate");
         has("core-read", "borrower.search", "borrower.portfolio", "intake.get", "loan.contract.get", "loan.payment-history.list", "loan.disbursement.list", "system.error-diagnostic.list");
         has("disbursements", "intermediary.collection.list", "intermediary.collection.create", "intermediary.collection.cancel", "intermediary.remittance.get", "intermediary.remittance.create", "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare", "intermediary.remittance.evidence.finalize", "intermediary.remittance.post");
+        has("loans", "loan.schedule.defer");
+        has("payments", "loan.schedule.defer");
+        for (const profile of ["core-read", "disbursements", "admin"] as const) {
+            expect(toolNamesForProfile(profile)).not.toContain("loan.schedule.defer");
+        }
     });
 
     test("replays valid representative workflows through all profiles, stops after evidence failure, and denies out-of-profile calls", async () => {

@@ -1487,6 +1487,12 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
         accruals: compositePageOutput(loanAccrualOutput).nullable(),
     }).strict(),
     "loan.payment-start-date.update": loanOutput.extend(writeAuditMetadata).strict(),
+    "loan.schedule.defer": z.object({
+        loanPublicId: uuid, sourceSchedulePublicId: uuid, replacementSchedulePublicId: uuid,
+        sourceStatus: z.literal("deferred"), replacementInstallmentNo: z.number().int().positive(), replacementDueDate: date,
+        scheduledPrincipal: money, scheduledInterest: money, scheduledFee: money, scheduledTotal: money,
+        auditPublicId: uuid, correlationId: uuid,
+    }).strict(),
     "loan.payment-history.list": z.object({
         loanPublicId: uuid,
         items: z.array(loanPaymentHistoryItemOutput),
@@ -1845,6 +1851,13 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         loanPublicId: uuid,
         paymentStartDate: date,
         reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.schedule.defer": z.object({
+        loanPublicId: uuid,
+        schedulePublicId: uuid,
+        reason: shortText,
+        confirmed: z.literal(true),
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
     "loan.payment-history.list": z.object({ loanPublicId: uuid }).strict(),
@@ -2269,6 +2282,7 @@ const destructiveTools = new Set<McpToolName>([
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
@@ -2318,6 +2332,7 @@ const financialTools = new Set<McpToolName>([
     "payment.allocation-correction.execute",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
@@ -2377,6 +2392,7 @@ const idempotentTools = new Set<McpToolName>([
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
@@ -2504,6 +2520,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "loan.contract.get": "Get complete accessible loan terms and repayment schedule read-only.",
     "loan.inspect-context": "Inspect one accessible loan with a bounded summary, schedule, or payment-history view.",
     "loan.payment-start-date.update": "Change the first repayment date while preserving posted payment history and auditing schedule amendments.",
+    "loan.schedule.defer": "Defer one explicitly confirmed fully unpaid scheduled installment to the next day after the schedule tail; this changes the schedule and records no payment.",
     "loan.payment-history.list": "List payment intakes and posted components for one accessible loan read-only.",
     "loan.disbursement.draft": "Create an editable actual loan disbursement draft.",
     "loan.disbursement.update": "Update supplied fields on an editable actual loan disbursement draft.",
@@ -2571,6 +2588,7 @@ function titleFor(toolName: McpToolName) {
 }
 
 function completionText(toolName: McpToolName) {
+    if (toolName === "loan.schedule.defer") return "Loan schedule installment deferred; no payment was recorded.";
     if (toolName === "loan.commission.reverse") return "Loan commission reversal preview completed.";
     const words = toolName.replace(/[.-]/gu, " ");
     return `${words[0]!.toUpperCase()}${words.slice(1)} completed.`;

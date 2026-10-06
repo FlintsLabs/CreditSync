@@ -25,7 +25,7 @@ const payments = [
     "payment.batch.decision", "payment.batch.cancel", "payment.reconcile.preview", "payment.reconcile.preflight", "payment.reconcile.mark-review",
     "payment.reconcile.execute", "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute", "payment.allocation-correction.preview",
     "payment.allocation-correction.execute", "payment.restore.create", "payment.restore.evidence.prepare", "payment.restore.evidence.finalize",
-    "payment.restore.preview", "payment.restore.execute", "payment.restore.cancel", "payment.restore.schedule-backfill", "payment.intermediary-attribution.list",
+    "payment.restore.preview", "payment.restore.execute", "payment.restore.cancel", "payment.restore.schedule-backfill", "payment.intermediary-attribution.list", "loan.schedule.defer",
     "payment.intermediary-attribution.create", "payment.intermediary-attribution.reverse", "workflow.resolve",
 ] as const satisfies readonly McpToolName[];
 
@@ -33,7 +33,7 @@ const loans = [
     "borrower.resolve-and-portfolio", "loan.inspect-context",
     "borrower.search", "borrower.portfolio", "loan.preview", "loan.draft", "loan.draft.delete", "loan.activate", "loan.cancel.preview", "loan.cancel.execute",
     "loan.interest-rate.list", "loan.interest-rate.preview", "loan.interest-rate.execute", "loan.settlement.preview", "loan.settlement.execute", "loan.settlement.reverse",
-    "loan.replacement.preview", "loan.replacement.execute", "loan.replacement.reverse", "loan.contract.get", "loan.payment-start-date.update", "loan.payment-history.list",
+    "loan.replacement.preview", "loan.replacement.execute", "loan.replacement.reverse", "loan.contract.get", "loan.payment-start-date.update", "loan.schedule.defer", "loan.payment-history.list",
     "loan.disbursement.list", "loan.disbursement.draft", "loan.disbursement.update", "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize",
     "loan.disbursement.evidence.import-chatgpt-file", "loan.disbursement.post", "loan.disbursement.reverse", "renewal.preview", "renewal.execute", "renewal.reverse",
     "loan.restructure.preview", "loan.restructure.execute", "loan.restructure.reverse", "loan.waiver.preview", "loan.waiver.execute", "loan.waiver.reverse",
