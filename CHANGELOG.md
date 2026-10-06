@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added explicitly confirmed `loan.schedule.defer` through MCP and synchronized the frozen CreditSync plugin contract to 11.1.0; it changes only the schedule and never records a payment.
+- Added explicitly confirmed `loan.schedule.defer` through MCP and synchronized the frozen CreditSync plugin contract to 11.1.0; it starts with read-only workflow resolution, changes only the schedule, and never records a payment.
 
 ### Changed
 

@@ -45,7 +45,9 @@ describe("CreditSync executable orchestration evals", () => {
     test("defers only an explicitly confirmed eligible schedule and never from payment reconciliation", async () => {
         const confirmed = await runEvalScenario("loan-schedule-defer-confirmed");
         expect(confirmed.outcome).toBe("completed");
-        expect(confirmed.calls.map((call) => call.name)).toEqual(["loan.contract.get", "loan.schedule.defer"]);
+        expect(confirmed.calls.map((call) => call.name)).toEqual(["workflow.resolve", "loan.inspect-context", "loan.schedule.defer"]);
+        expect(confirmed.calls[0]?.arguments).toEqual({ intent: "inspect", target: { kind: "loan", publicId: "0198c481-3e2b-7000-8000-000000000031" }, attachments: "none" });
+        expect(confirmed.calls[1]?.arguments).toEqual({ loanPublicId: "0198c481-3e2b-7000-8000-000000000031", view: "schedule", limit: 100 });
         expect(confirmed.events.at(-3)).toEqual({
             type: "presentation", name: "loan-schedule-deferral", data: {
                 loanPublicId: "0198c481-3e2b-7000-8000-000000000031",
@@ -62,9 +64,10 @@ describe("CreditSync executable orchestration evals", () => {
             confirmed: true,
             idempotencyKey: "loan-schedule-defer-20260908-1",
         });
-        for (const id of ["loan-schedule-defer-missing-confirmation", "loan-schedule-defer-false-confirmation", "loan-schedule-defer-ineligible-partial"]) {
+        for (const id of ["loan-schedule-defer-missing-confirmation", "loan-schedule-defer-false-confirmation", "loan-schedule-defer-ineligible-partial", "loan-schedule-defer-incomplete-schedule", "loan-schedule-defer-empty-schedule"]) {
             const stopped = await runEvalScenario(id);
             expect(stopped.outcome).toBe("stopped");
+            expect(stopped.calls.map((call) => call.name)).toEqual(["workflow.resolve", "loan.inspect-context"]);
             expect(stopped.calls.some((call) => call.name === "loan.schedule.defer")).toBe(false);
         }
         const payment = await runEvalScenario("payment-slip");
@@ -73,7 +76,8 @@ describe("CreditSync executable orchestration evals", () => {
         const catalog = JSON.parse(await readFile(resolve(pluginRoot, "evals/evals.json"), "utf8")) as { cases: CatalogCase[] };
         expect(catalog.cases.map((item) => item.id)).toEqual(expect.arrayContaining([
             "loan-schedule-defer-confirmed", "loan-schedule-defer-missing-confirmation",
-            "loan-schedule-defer-false-confirmation", "loan-schedule-defer-ineligible-partial", "payment-slip-no-deferral",
+            "loan-schedule-defer-false-confirmation", "loan-schedule-defer-ineligible-partial",
+            "loan-schedule-defer-incomplete-schedule", "loan-schedule-defer-empty-schedule", "payment-slip-no-deferral",
         ]));
     });
 

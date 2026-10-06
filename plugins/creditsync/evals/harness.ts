@@ -308,6 +308,29 @@ const resolverFixture = (status: string, extras: Record<string, unknown> = {}) =
     status, nextSteps: [], blockers: [], prohibitedTools: [], reevaluateOn: "evidence_change", ...extras,
 });
 
+const loanScheduleDeferralResolver = {
+    name: "workflow.resolve",
+    arguments: { intent: "inspect", target: { kind: "loan", publicId: LOAN_A }, attachments: "none" },
+    result: resolverFixture("next_step", {
+        workflowId: "creditsync.inspect",
+        observed: { state: "posted", loanType: "scheduled", evidenceReady: true, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null, paymentBlockers: [] },
+        nextSteps: [{ toolName: "loan.inspect-context", arguments: {}, requiredInputs: ["loanPublicId"], requiresConfirmation: false }],
+        reevaluateOn: "target_change",
+    }),
+};
+
+const deferralScheduleRows = [
+    { publicId: SCHEDULE_A, installmentNo: 1, dueDate: "2026-09-01", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "100.00", status: "pending" },
+    { publicId: SCHEDULE_B, installmentNo: 2, dueDate: "2026-09-08", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "100.00", status: "pending" },
+];
+
+const deferralScheduleInspection = (schedule = deferralScheduleRows, hasMore = false, limit = 100, totalInstallments = schedule.length) => ({
+    loan: { publicId: LOAN_A, principal: "1000.00", principalAmount: "1000.00", interestRate: "0.00", repaymentType: "weekly", termMonths: null, installmentAmount: "100.00", totalInstallments, startDate: "2026-09-01", nextDueDate: "2026-09-08", outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" },
+    view: "schedule",
+    schedule: { items: schedule, limit, hasMore, nextCursor: hasMore ? "schedule-next-page" : null },
+    history: null, disbursements: null, accruals: null,
+});
+
 const allocationPreviewFixture = (status: "ready" | "blocked" = "ready") => ({
     publicId: ALLOCATION_PREVIEW, status, paymentIntakePublicId: INTAKE,
     transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, loanPublicId: LOAN_A,
@@ -1686,20 +1709,25 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "loan-schedule-defer-confirmed": {
         script: [
-            { name: "loan.contract.get", arguments: { loanPublicId: LOAN_A }, result: {
-                publicId: LOAN_A, principal: "1000.00", principalAmount: "1000.00", interestRate: "0.00", repaymentType: "weekly", termMonths: null, installmentAmount: "100.00", totalInstallments: 2, startDate: "2026-09-01", nextDueDate: "2026-09-08", outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
-                schedule: [
-                    { publicId: SCHEDULE_A, installmentNo: 1, dueDate: "2026-09-01", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "100.00", status: "pending" },
-                    { publicId: SCHEDULE_B, installmentNo: 2, dueDate: "2026-09-08", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "100.00", status: "pending" },
-                ],
-            } },
+            loanScheduleDeferralResolver,
+            { name: "loan.inspect-context", arguments: { loanPublicId: LOAN_A, view: "schedule", limit: 100 }, result: deferralScheduleInspection() },
             { name: "loan.schedule.defer", arguments: { loanPublicId: LOAN_A, schedulePublicId: SCHEDULE_B, reason: "Borrower requested one-day schedule deferral", confirmed: true, idempotencyKey: "loan-schedule-defer-20260908-1" }, result: {
                 loanPublicId: LOAN_A, sourceSchedulePublicId: SCHEDULE_B, replacementSchedulePublicId: SCHEDULE_C, sourceStatus: "deferred", replacementInstallmentNo: 3, replacementDueDate: "2026-09-09", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION,
             } },
         ],
         run: async (mcp) => {
-            const loan = await mcp.call("loan.contract.get", { loanPublicId: LOAN_A });
-            const schedule = loan.schedule as Array<Record<string, unknown>>;
+            const resolution = await mcp.call("workflow.resolve", loanScheduleDeferralResolver.arguments);
+            if (resolution.status !== "next_step" || !(resolution.nextSteps as Array<Record<string, unknown>>).some((step) => step.toolName === "loan.inspect-context")) {
+                return { outcome: "stopped", stopReason: "workflow-resolution-required" } as const;
+            }
+            const inspection = await mcp.call("loan.inspect-context", { loanPublicId: LOAN_A, view: "schedule", limit: 100 });
+            const loan = inspection.loan as Record<string, unknown>;
+            const page = inspection.schedule as { items: Array<Record<string, unknown>>; hasMore: boolean; nextCursor: string | null } | null;
+            if (inspection.view !== "schedule" || !page || page.hasMore || page.nextCursor !== null) {
+                return { outcome: "stopped", stopReason: "complete-schedule-required" } as const;
+            }
+            const schedule = page.items;
+            if (schedule.length === 0) return { outcome: "stopped", stopReason: "schedule-not-found" } as const;
             const source = schedule.at(-1)!;
             if (loan.status !== "active" || source.status !== "pending" || source.paidTotal !== "0.00" || source.remainingDue !== source.scheduledTotal) {
                 return { outcome: "stopped", stopReason: "schedule-row-not-eligible" } as const;
@@ -1714,16 +1742,24 @@ const SCENARIOS: Record<string, Scenario> = {
         },
     },
     "loan-schedule-defer-missing-confirmation": {
-        script: [{ name: "loan.contract.get", arguments: { loanPublicId: LOAN_A }, result: { publicId: LOAN_A, principal: "1000.00", principalAmount: "1000.00", interestRate: "0.00", repaymentType: "weekly", termMonths: null, installmentAmount: "100.00", totalInstallments: 1, startDate: "2026-09-01", nextDueDate: "2026-09-08", outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active", schedule: [] } }],
-        run: async (mcp) => { await mcp.call("loan.contract.get", { loanPublicId: LOAN_A }); return { outcome: "stopped", stopReason: "explicit-human-confirmation-required" } as const; },
+        script: [loanScheduleDeferralResolver, { name: "loan.inspect-context", arguments: { loanPublicId: LOAN_A, view: "schedule", limit: 100 }, result: deferralScheduleInspection() }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", loanScheduleDeferralResolver.arguments); await mcp.call("loan.inspect-context", { loanPublicId: LOAN_A, view: "schedule", limit: 100 }); return { outcome: "stopped", stopReason: "explicit-human-confirmation-required" } as const; },
     },
     "loan-schedule-defer-false-confirmation": {
-        script: [],
-        run: async (mcp) => { mcp.recordLoanScheduleDeferralConfirmation(false); return { outcome: "stopped", stopReason: "explicit-human-confirmation-required" } as const; },
+        script: [loanScheduleDeferralResolver, { name: "loan.inspect-context", arguments: { loanPublicId: LOAN_A, view: "schedule", limit: 100 }, result: deferralScheduleInspection() }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", loanScheduleDeferralResolver.arguments); await mcp.call("loan.inspect-context", { loanPublicId: LOAN_A, view: "schedule", limit: 100 }); mcp.recordLoanScheduleDeferralConfirmation(false); return { outcome: "stopped", stopReason: "explicit-human-confirmation-required" } as const; },
     },
     "loan-schedule-defer-ineligible-partial": {
-        script: [{ name: "loan.contract.get", arguments: { loanPublicId: LOAN_A }, result: { publicId: LOAN_A, principal: "1000.00", principalAmount: "1000.00", interestRate: "0.00", repaymentType: "weekly", termMonths: null, installmentAmount: "100.00", totalInstallments: 1, startDate: "2026-09-01", nextDueDate: "2026-09-08", outstandingPrincipal: "50.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active", schedule: [{ publicId: SCHEDULE_A, installmentNo: 1, dueDate: "2026-09-08", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "50.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "50.00", status: "partial" }] } }],
-        run: async (mcp) => { const loan = await mcp.call("loan.contract.get", { loanPublicId: LOAN_A }); const row = (loan.schedule as Array<Record<string, unknown>>)[0]; return row?.status === "partial" ? { outcome: "stopped", stopReason: "schedule-not-fully-unpaid" } as const : { outcome: "stopped", stopReason: "schedule-ineligible" } as const; },
+        script: [loanScheduleDeferralResolver, { name: "loan.inspect-context", arguments: { loanPublicId: LOAN_A, view: "schedule", limit: 100 }, result: deferralScheduleInspection([{ ...deferralScheduleRows[1]!, paidTotal: "50.00", remainingDue: "50.00", status: "partial" }]) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", loanScheduleDeferralResolver.arguments); const inspection = await mcp.call("loan.inspect-context", { loanPublicId: LOAN_A, view: "schedule", limit: 100 }); const page = inspection.schedule as { items: Array<Record<string, unknown>> } | null; const row = page?.items[0]; return row?.status === "partial" ? { outcome: "stopped", stopReason: "schedule-not-fully-unpaid" } as const : { outcome: "stopped", stopReason: "schedule-ineligible" } as const; },
+    },
+    "loan-schedule-defer-incomplete-schedule": {
+        script: [loanScheduleDeferralResolver, { name: "loan.inspect-context", arguments: { loanPublicId: LOAN_A, view: "schedule", limit: 1 }, result: deferralScheduleInspection(deferralScheduleRows.slice(0, 1), true, 1, 2) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", loanScheduleDeferralResolver.arguments); const inspection = await mcp.call("loan.inspect-context", { loanPublicId: LOAN_A, view: "schedule", limit: 1 }); const page = inspection.schedule as { hasMore: boolean; nextCursor: string | null } | null; return page && !page.hasMore && page.nextCursor === null ? { outcome: "completed" } as const : { outcome: "stopped", stopReason: "complete-schedule-required" } as const; },
+    },
+    "loan-schedule-defer-empty-schedule": {
+        script: [loanScheduleDeferralResolver, { name: "loan.inspect-context", arguments: { loanPublicId: LOAN_A, view: "schedule", limit: 100 }, result: deferralScheduleInspection([], false, 100, 0) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", loanScheduleDeferralResolver.arguments); const inspection = await mcp.call("loan.inspect-context", { loanPublicId: LOAN_A, view: "schedule", limit: 100 }); const page = inspection.schedule as { items: Array<Record<string, unknown>> } | null; return page?.items.length ? { outcome: "completed" } as const : { outcome: "stopped", stopReason: "schedule-not-found" } as const; },
     },
     "payment-slip-no-deferral": {
         script: [],

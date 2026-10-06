@@ -331,7 +331,7 @@ describe("CreditSync plugin 11.1.0 contract", () => {
             "loan-replacement-portfolio-scope-mismatch",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
         expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(53);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(82);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(84);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

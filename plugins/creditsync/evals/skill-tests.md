@@ -2,7 +2,7 @@
 
 ## Scheduled installment deferral (plugin 11.1.0)
 
-The executable scenarios inspect `loan.contract.get` and the exact schedule before presenting the source due date and scheduled total, plus the next calendar day after the inspected schedule tail with the unchanged amount and an explicit no-payment statement. Only the confirmed eligible case calls `loan.schedule.defer` with the inspected loan/schedule UUIDs, reason, `confirmed: true`, and a stable key. Missing or false confirmation and a partially paid row stop before the write. The payment-slip path and a dedicated reconciliation negative case assert that deferral is never called automatically. These are local scripted MCP checks; no production tenant was accessed.
+The executable scenarios resolve the read-only `inspect` intent first, follow its schedule inspection route, and require a complete `loan.inspect-context` schedule page before presenting the source due date and scheduled total, plus the next calendar day after the inspected schedule tail with the unchanged amount and an explicit no-payment statement. Only the confirmed eligible case calls `loan.schedule.defer` with the inspected loan/schedule UUIDs, reason, `confirmed: true`, and a stable key. Missing or false confirmation, a partially paid row, or an incomplete schedule stops before the write. The payment-slip path and a dedicated reconciliation negative case assert that deferral is never called automatically. These are local scripted MCP checks; no production tenant was accessed.
 
 ## Plugin 2.5.0 settlement/restructure extension
 

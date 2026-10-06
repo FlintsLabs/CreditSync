@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added the audited `loan.schedule.defer` MCP workflow and synchronized contract/profile snapshots, with explicit confirmation, exact schedule presentation, and payment-reconciliation isolation.
+- Added the audited `loan.schedule.defer` MCP workflow and synchronized contract/profile snapshots, with read-only workflow resolution, explicit confirmation, complete schedule inspection, and payment-reconciliation isolation.
 
 ## v11.0.0 - 2026-09-25
 
