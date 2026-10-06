@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.64 - 2026-10-06
+
+### Added
+
+- Drafted the MCP loan-schedule deferral tool specification for review; documentation only, with no runtime or financial changes.
+
 ## v0.4.61 - 2026-09-25
 
 ### Fixed
