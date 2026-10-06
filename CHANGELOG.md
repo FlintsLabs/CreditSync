@@ -4,7 +4,7 @@
 
 ### Added
 
-- Exposed explicitly confirmed, idempotent loan schedule installment deferral through the audited MCP command; deferral reuses the existing service and does not record a payment.
+- Added explicitly confirmed `loan.schedule.defer` through MCP and synchronized the frozen CreditSync plugin contract to 11.1.0; it changes only the schedule and never records a payment.
 
 ## v0.4.64 - 2026-10-06
 

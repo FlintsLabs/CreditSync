@@ -11,6 +11,9 @@ const EVIDENCE = "0198c481-3e2b-7000-8000-000000000023";
 const EVIDENCE_FILE = "0198c481-3e2b-7000-8000-000000000025";
 const PROPOSAL = "0198c481-3e2b-7000-8000-000000000024";
 const LOAN_A = "0198c481-3e2b-7000-8000-000000000031";
+const SCHEDULE_A = "0198c481-3e2b-7000-8000-000000000611";
+const SCHEDULE_B = "0198c481-3e2b-7000-8000-000000000612";
+const SCHEDULE_C = "0198c481-3e2b-7000-8000-000000000613";
 const LOAN_B = "0198c481-3e2b-7000-8000-000000000032";
 const LOAN_C = "0198c481-3e2b-7000-8000-000000000033";
 const DRAFT = "0198c481-3e2b-7000-8000-000000000034";
@@ -127,7 +130,8 @@ export type HarnessEvent =
     | { type: "presentation"; name: "intermediated-disbursement-preview"; data: Record<string, unknown> }
     | { type: "presentation"; name: "loan-replacement-preview"; data: Record<string, unknown> }
     | { type: "presentation"; name: "scheduled-allocation-correction-preview"; data: Record<string, unknown> }
-    | { type: "confirmation"; name: "floating-settlement" | "intermediated-disbursement" | "loan-replacement" | "scheduled-allocation-correction"; confirmed: boolean };
+    | { type: "presentation"; name: "loan-schedule-deferral"; data: Record<string, unknown> }
+    | { type: "confirmation"; name: "floating-settlement" | "intermediated-disbursement" | "loan-replacement" | "scheduled-allocation-correction" | "loan-schedule-deferral"; confirmed: boolean };
 
 export type SameTaskRenewalExecutionContext = {
     provenance: "same_task_renewal_execute_result";
@@ -235,6 +239,14 @@ class ScriptedMcp {
 
     recordScheduledAllocationCorrectionConfirmation(confirmed: boolean) {
         this.events.push({ type: "confirmation", name: "scheduled-allocation-correction", confirmed });
+    }
+
+    presentLoanScheduleDeferral(data: Record<string, unknown>) {
+        this.events.push({ type: "presentation", name: "loan-schedule-deferral", data });
+    }
+
+    recordLoanScheduleDeferralConfirmation(confirmed: boolean) {
+        this.events.push({ type: "confirmation", name: "loan-schedule-deferral", confirmed });
     }
 
     async call(name: McpToolName, args: Record<string, unknown>) {
@@ -1671,6 +1683,51 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "loan.cancel.execute", arguments: { previewPublicId: CANCELLATION_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Contract was never funded", idempotencyKey: "loan-cancel-execute-20260825-1" }, result: { publicId: LOAN_A, principal: "20000.00", principalAmount: "20000.00", interestRate: "10.00", repaymentType: "monthly", termMonths: 12, installmentAmount: "1750.00", totalInstallments: 12, startDate: "2026-08-01", nextDueDate: "2026-08-25", status: "cancelled", outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", auditPublicId: CANCELLATION_AUDIT, auditPublicIds: [CANCELLATION_AUDIT], correlationId: CANCELLATION_AUDIT } },
         ],
         run: (mcp) => unfundedCancellationFlow(mcp),
+    },
+    "loan-schedule-defer-confirmed": {
+        script: [
+            { name: "loan.contract.get", arguments: { loanPublicId: LOAN_A }, result: {
+                publicId: LOAN_A, principal: "1000.00", principalAmount: "1000.00", interestRate: "0.00", repaymentType: "weekly", termMonths: null, installmentAmount: "100.00", totalInstallments: 2, startDate: "2026-09-01", nextDueDate: "2026-09-08", outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+                schedule: [
+                    { publicId: SCHEDULE_A, installmentNo: 1, dueDate: "2026-09-01", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "100.00", status: "pending" },
+                    { publicId: SCHEDULE_B, installmentNo: 2, dueDate: "2026-09-08", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "100.00", status: "pending" },
+                ],
+            } },
+            { name: "loan.schedule.defer", arguments: { loanPublicId: LOAN_A, schedulePublicId: SCHEDULE_B, reason: "Borrower requested one-day schedule deferral", confirmed: true, idempotencyKey: "loan-schedule-defer-20260908-1" }, result: {
+                loanPublicId: LOAN_A, sourceSchedulePublicId: SCHEDULE_B, replacementSchedulePublicId: SCHEDULE_C, sourceStatus: "deferred", replacementInstallmentNo: 3, replacementDueDate: "2026-09-09", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION,
+            } },
+        ],
+        run: async (mcp) => {
+            const loan = await mcp.call("loan.contract.get", { loanPublicId: LOAN_A });
+            const schedule = loan.schedule as Array<Record<string, unknown>>;
+            const source = schedule.at(-1)!;
+            if (loan.status !== "active" || source.status !== "pending" || source.paidTotal !== "0.00" || source.remainingDue !== source.scheduledTotal) {
+                return { outcome: "stopped", stopReason: "schedule-row-not-eligible" } as const;
+            }
+            const tailDate = new Date(`${source.dueDate}T00:00:00.000Z`);
+            tailDate.setUTCDate(tailDate.getUTCDate() + 1);
+            const replacementDate = tailDate.toISOString().slice(0, 10);
+            mcp.presentLoanScheduleDeferral({ loanPublicId: LOAN_A, schedulePublicId: source.publicId, sourceDueDate: source.dueDate, amount: source.scheduledTotal, replacementDueDate: replacementDate, replacementAmount: source.scheduledTotal, recordsPayment: false });
+            mcp.recordLoanScheduleDeferralConfirmation(true);
+            await mcp.call("loan.schedule.defer", { loanPublicId: LOAN_A, schedulePublicId: source.publicId as string, reason: "Borrower requested one-day schedule deferral", confirmed: true, idempotencyKey: "loan-schedule-defer-20260908-1" });
+            return { outcome: "completed" } as const;
+        },
+    },
+    "loan-schedule-defer-missing-confirmation": {
+        script: [{ name: "loan.contract.get", arguments: { loanPublicId: LOAN_A }, result: { publicId: LOAN_A, principal: "1000.00", principalAmount: "1000.00", interestRate: "0.00", repaymentType: "weekly", termMonths: null, installmentAmount: "100.00", totalInstallments: 1, startDate: "2026-09-01", nextDueDate: "2026-09-08", outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active", schedule: [] } }],
+        run: async (mcp) => { await mcp.call("loan.contract.get", { loanPublicId: LOAN_A }); return { outcome: "stopped", stopReason: "explicit-human-confirmation-required" } as const; },
+    },
+    "loan-schedule-defer-false-confirmation": {
+        script: [],
+        run: async (mcp) => { mcp.recordLoanScheduleDeferralConfirmation(false); return { outcome: "stopped", stopReason: "explicit-human-confirmation-required" } as const; },
+    },
+    "loan-schedule-defer-ineligible-partial": {
+        script: [{ name: "loan.contract.get", arguments: { loanPublicId: LOAN_A }, result: { publicId: LOAN_A, principal: "1000.00", principalAmount: "1000.00", interestRate: "0.00", repaymentType: "weekly", termMonths: null, installmentAmount: "100.00", totalInstallments: 1, startDate: "2026-09-01", nextDueDate: "2026-09-08", outstandingPrincipal: "50.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active", schedule: [{ publicId: SCHEDULE_A, installmentNo: 1, dueDate: "2026-09-08", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "50.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "50.00", status: "partial" }] } }],
+        run: async (mcp) => { const loan = await mcp.call("loan.contract.get", { loanPublicId: LOAN_A }); const row = (loan.schedule as Array<Record<string, unknown>>)[0]; return row?.status === "partial" ? { outcome: "stopped", stopReason: "schedule-not-fully-unpaid" } as const : { outcome: "stopped", stopReason: "schedule-ineligible" } as const; },
+    },
+    "payment-slip-no-deferral": {
+        script: [],
+        run: async () => ({ outcome: "stopped", stopReason: "payment-reconciliation-does-not-defer-schedules" } as const),
     },
     "loan-cancel-funded-stop": {
         script: [

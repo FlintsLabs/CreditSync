@@ -19,7 +19,7 @@ async function json(path: string) {
     return JSON.parse(await readFile(resolve(pluginRoot, path), "utf8")) as Record<string, unknown>;
 }
 
-describe("CreditSync plugin 11.0.0 contract", () => {
+describe("CreditSync plugin 11.1.0 contract", () => {
     test("exposes the documented local validation command", async () => {
         const packageManifest = await json("package.json");
         expect(packageManifest.private).toBe(true);
@@ -29,7 +29,7 @@ describe("CreditSync plugin 11.0.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("11.0.0");
+        expect(manifest.version).toBe("11.1.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -145,10 +145,26 @@ describe("CreditSync plugin 11.0.0 contract", () => {
     test("frozen full MCP metadata matches an actual MCP tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
-        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 11.0.0; breaking changes require plugin 12.0.0.");
+        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 11.1.0; breaking changes require plugin 12.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
         expect(contract.tools).toHaveLength(MCP_TOOL_NAMES.length);
         expect(contract.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["system.error-diagnostic.get", "system.error-diagnostic.list"]));
+        expect(contract.tools.map((tool) => tool.name)).toContain("loan.schedule.defer");
+        const deferral = contract.tools.find((tool) => tool.name === "loan.schedule.defer") as any;
+        expect(deferral.inputSchema).toMatchObject({ additionalProperties: false });
+        expect(deferral.inputSchema.required).toEqual(["loanPublicId", "schedulePublicId", "reason", "confirmed", "idempotencyKey"]);
+        expect(deferral.inputSchema.properties.loanPublicId.format).toBe("uuid");
+        expect(deferral.inputSchema.properties.schedulePublicId.format).toBe("uuid");
+        expect(deferral.inputSchema.properties.confirmed.const).toBe(true);
+        for (const profileName of ["full", "loans", "payments"]) {
+            const profile = await json(`references/mcp-profiles/${profileName}.json`) as any;
+            expect(profile.tools).toContain("loan.schedule.defer");
+        }
+        for (const profileName of ["core-read", "disbursements", "admin"]) {
+            const profile = await json(`references/mcp-profiles/${profileName}.json`) as any;
+            expect(profile.tools).not.toContain("loan.schedule.defer");
+        }
+        expect(deferral.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         for (const name of ["evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file"]) {
             const tool = contract.tools.find((candidate) => candidate.name === name) as any;
@@ -314,8 +330,8 @@ describe("CreditSync plugin 11.0.0 contract", () => {
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(52);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(78);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(53);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(82);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

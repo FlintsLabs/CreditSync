@@ -1,5 +1,9 @@
 # Skill application evidence
 
+## Scheduled installment deferral (plugin 11.1.0)
+
+The executable scenarios inspect `loan.contract.get` and the exact schedule before presenting the source due date and scheduled total, plus the next calendar day after the inspected schedule tail with the unchanged amount and an explicit no-payment statement. Only the confirmed eligible case calls `loan.schedule.defer` with the inspected loan/schedule UUIDs, reason, `confirmed: true`, and a stable key. Missing or false confirmation and a partially paid row stop before the write. The payment-slip path and a dedicated reconciliation negative case assert that deferral is never called automatically. These are local scripted MCP checks; no production tenant was accessed.
+
 ## Plugin 2.5.0 settlement/restructure extension
 
 The executable harness covers an identity-resolved `inspect → preview → exact confirmation → execute` restructure, a later component-waiver preview/execute, and six stop gates: ambiguous borrower, stale preview, missing confirmation, unexpected additional cash, missing waiver reason, and authoritative unsafe-reversal rejection. Every scripted argument is checked against the authenticated frozen 47-tool schema; forbidden financial writes and unsupported fields fail the suite.

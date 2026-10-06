@@ -50,6 +50,10 @@ Payment source attribution is independent from the participant agreement. Inspec
 
 ## Existing loans
 
+### Defer one scheduled installment
+
+For an explicitly requested one-day deferral, inspect the exact loan and complete schedule with `loan.contract.get`. Select only an eligible schedule row that is fully unpaid. Present its source due date and exact scheduled total, then state the expected replacement due date as the next calendar day after the inspected schedule tail and show that the amount is unchanged. Explain that this action changes only the schedule and records no payment. Obtain explicit human confirmation of that exact row and date before calling `loan.schedule.defer` with the inspected loan and schedule public UUIDs, a reason, literal `confirmed: true`, and a stable idempotency key. A partial, paid, otherwise ineligible row, incomplete/stale schedule, or missing/false confirmation stops without calling the tool. Report the returned replacement schedule UUID, date, unchanged component amounts, audit UUID, and correlation UUID.
+
 For an active contract that was never actually disbursed, inspect `loan.contract.get` and `loan.disbursement.list`, then use `loan.cancel.preview` with a specific reason. This workflow may cancel a non-zero contractual schedule only when actual disbursement is `0.00`, no payment remains posted after compensating reversals, and no downstream dependency blocks cancellation. Show the exact eligibility, before balances, preview hash, balance version, and expiry; require explicit confirmation before `loan.cancel.execute` with literal `confirmed: true` and a stable idempotency key. Cancellation marks the loan and unpaid schedules `cancelled`, preserves all original/reversal/audit history, and never acts as a waiver for funded money. If any actual disbursement or posted payment remains, stop and route to settlement, waiver, or reversal instead.
 
 - Draft: inspect it in `borrower.portfolio`; if the required edit tool is unavailable, report that limitation rather than activating incorrect terms.

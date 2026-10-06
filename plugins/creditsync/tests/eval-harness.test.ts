@@ -42,6 +42,41 @@ function conciseSchemaErrors(errors: null | undefined | Array<{ instancePath?: s
 }
 
 describe("CreditSync executable orchestration evals", () => {
+    test("defers only an explicitly confirmed eligible schedule and never from payment reconciliation", async () => {
+        const confirmed = await runEvalScenario("loan-schedule-defer-confirmed");
+        expect(confirmed.outcome).toBe("completed");
+        expect(confirmed.calls.map((call) => call.name)).toEqual(["loan.contract.get", "loan.schedule.defer"]);
+        expect(confirmed.events.at(-3)).toEqual({
+            type: "presentation", name: "loan-schedule-deferral", data: {
+                loanPublicId: "0198c481-3e2b-7000-8000-000000000031",
+                schedulePublicId: "0198c481-3e2b-7000-8000-000000000612",
+                sourceDueDate: "2026-09-08", amount: "100.00", replacementDueDate: "2026-09-09",
+                replacementAmount: "100.00", recordsPayment: false,
+            },
+        });
+        expect(confirmed.events.at(-2)).toEqual({ type: "confirmation", name: "loan-schedule-deferral", confirmed: true });
+        expect(confirmed.calls.at(-1)?.arguments).toEqual({
+            loanPublicId: "0198c481-3e2b-7000-8000-000000000031",
+            schedulePublicId: "0198c481-3e2b-7000-8000-000000000612",
+            reason: "Borrower requested one-day schedule deferral",
+            confirmed: true,
+            idempotencyKey: "loan-schedule-defer-20260908-1",
+        });
+        for (const id of ["loan-schedule-defer-missing-confirmation", "loan-schedule-defer-false-confirmation", "loan-schedule-defer-ineligible-partial"]) {
+            const stopped = await runEvalScenario(id);
+            expect(stopped.outcome).toBe("stopped");
+            expect(stopped.calls.some((call) => call.name === "loan.schedule.defer")).toBe(false);
+        }
+        const payment = await runEvalScenario("payment-slip");
+        expect(payment.calls.some((call) => call.name === "loan.schedule.defer")).toBe(false);
+        expect((await runEvalScenario("payment-slip-no-deferral")).calls).toEqual([]);
+        const catalog = JSON.parse(await readFile(resolve(pluginRoot, "evals/evals.json"), "utf8")) as { cases: CatalogCase[] };
+        expect(catalog.cases.map((item) => item.id)).toEqual(expect.arrayContaining([
+            "loan-schedule-defer-confirmed", "loan-schedule-defer-missing-confirmation",
+            "loan-schedule-defer-false-confirmation", "loan-schedule-defer-ineligible-partial", "payment-slip-no-deferral",
+        ]));
+    });
+
     test("requires no-write preflight before normal payment posting and blocks review-required preflight", async () => {
         const ready = await runEvalScenario("payment-slip");
         expect(ready.calls.map((call) => call.name)).toContainEqual("payment.reconcile.preflight");

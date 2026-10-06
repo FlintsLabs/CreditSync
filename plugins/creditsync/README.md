@@ -1,14 +1,16 @@
-# CreditSync Plugin 11.0.0
+# CreditSync Plugin 11.1.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `11.0.0`
+- Plugin version: `11.1.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
 - Remote endpoint: registered private app pointing to `https://<creditsync-host>/mcp`
+
+The additive `loan.schedule.defer` command defers one explicitly confirmed, fully unpaid scheduled installment to the next calendar day after the inspected schedule tail. It changes the schedule only and does not record a payment; payment and slip reconciliation never invoke it automatically.
 
 The package does not contain an MCP URL, bearer token, `.mcp.json`, OAuth configuration, hooks, plugin UI, or funding mutation capability. It references a private registered app so credentials remain in Codex/server secret storage.
 

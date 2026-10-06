@@ -1,5 +1,11 @@
 # CreditSync Plugin Changelog
 
+## v11.1.0 - 2026-10-06
+
+### Added
+
+- Added the audited `loan.schedule.defer` MCP workflow and synchronized contract/profile snapshots, with explicit confirmation, exact schedule presentation, and payment-reconciliation isolation.
+
 ## v11.0.0 - 2026-09-25
 
 ### Changed
