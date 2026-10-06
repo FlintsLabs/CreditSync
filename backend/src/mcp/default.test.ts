@@ -32,7 +32,8 @@ import type { IntermediaryRemittanceEvidenceGateway } from "../services/intermed
 import type { TransferEvidenceStorageGateway } from "../services/transfer-evidence-service";
 import { seedReplacementFixture } from "../services/loan-replacement-test-fixture";
 import { createDefaultMcpHttpPlugin, createDefaultMcpToolHandlers, paymentReverseCommandContext } from "./default";
-import { MCP_TOOL_NAMES, type McpToolName } from "./server";
+import { advertisedMcpToolMetadata, MCP_CATALOG_VERSION, MCP_TOOL_NAMES, type McpToolName } from "./server";
+import { TOOL_GUIDANCE_VERSION } from "./tool-guidance";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -70,6 +71,16 @@ test("allocation-correction keeps the existing preview and execute handler pair"
     const handlers = createDefaultMcpToolHandlers();
     expect(typeof handlers["payment.allocation-correction.preview"]).toBe("function");
     expect(typeof handlers["payment.allocation-correction.execute"]).toBe("function");
+});
+
+test("default catalog search uses full serving metadata but returns no hidden executable names", async () => {
+    const handler = createDefaultMcpToolHandlers()["tool.catalog.search"];
+    const result = await handler({ tenantId: "tenant-test", actorUserId: null, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() }, {
+        query: "borrower.create", __profile: "core-read", __catalogVersion: MCP_CATALOG_VERSION,
+        __guidanceVersion: TOOL_GUIDANCE_VERSION, __catalog: advertisedMcpToolMetadata(),
+    }) as { status: string; matches: readonly { toolName: string }[]; requiredProfiles: readonly string[] };
+    expect(result).toMatchObject({ status: "connection_required", matches: [], requiredProfiles: expect.arrayContaining(["admin"]) });
+    expect(JSON.stringify(result)).not.toContain("borrower.create");
 });
 
 function isDisposableTestDatabase(value: string | undefined) {

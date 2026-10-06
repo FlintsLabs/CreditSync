@@ -2192,7 +2192,6 @@ const readOnlyTools = new Set<McpToolName>([
     "payment.batch.workspace",
     "payment.batch.candidates",
     "loan.preview",
-    "loan.cancel.preview",
     "loan.interest-rate.list",
     "loan.disbursement.list",
     "loan.contract.get",
@@ -2751,8 +2750,8 @@ export async function executeMcpToolCall(
             const result = await handler(toolContext, toolName === "workflow.resolve"
                 ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __workflowVersion: WORKFLOW_VERSION }
                 : toolName === "tool.catalog.search"
-                    ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __guidanceVersion: TOOL_GUIDANCE_VERSION, __catalog: catalog }
-                : handlerInput);
+                    ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __guidanceVersion: TOOL_GUIDANCE_VERSION, __catalog: TOOL_CATALOG }
+                    : handlerInput);
             recordMcpBreadcrumb({ stage: "handler", outcome: "succeeded" });
             const auditPublicIds = requiresAudit ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result }) : undefined;
             if (requiresAudit && auditPublicIds?.length === 0) throw new DomainError("AUDIT_METADATA_UNAVAILABLE", "The financial command completed without retrievable public audit metadata", 503);

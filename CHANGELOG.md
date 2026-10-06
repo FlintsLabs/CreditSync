@@ -7,6 +7,10 @@
 - Added typed, immutable, exhaustive MCP guidance for the existing 145-tool catalog, canonical content hashing, shared descriptions and initialization instructions across transports, capability-specific relationships, conditional borrower inputs, and safe retry/confirmation guidance. Updated authorized implementation-worker routing to GPT-6 Luna Speed with medium reasoning and Fast tier.
 - Added read-only `tool.catalog.search` for bounded Thai/English capability lookup across the serving catalog, with profile filtering, version-bound cursors, and explicit clarification/connection/refresh statuses.
 
+### Fixed
+
+- Corrected the persisted, non-idempotent `loan.cancel.preview` MCP policy and guidance; tightened capability search cursor validation, bounded contracts, high-risk Thai/English ranking, hidden-profile handling, and transport spoof/audit regressions. Corrected conditional evidence-recovery, payment-date confirmation, funding retry/source, and intermediary attribution guidance.
+
 ## v0.4.63 - 2026-09-25
 
 ### Added

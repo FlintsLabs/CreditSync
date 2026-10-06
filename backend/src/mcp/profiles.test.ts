@@ -87,6 +87,11 @@ describe("MCP catalog and profiles", () => {
             expect(toolNamesForProfile(profile)).toContain("tool.catalog.search");
         }
         expect(MCP_TOOL_NAMES).toHaveLength(146);
+        expect(toolNamesForProfile("core-read")).toHaveLength(38);
+        expect(toolNamesForProfile("core-read")).not.toContain("loan.cancel.preview");
+        const cancellationPreview = catalogByName.get("loan.cancel.preview")!;
+        expect(cancellationPreview.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false });
+        expect(cancellationPreview.policy).toEqual({ kind: "mutating", requiresAudit: false });
     });
     test("has one canonical definition for every current tool", () => {
         expect(MCP_TOOL_NAMES).toEqual(expect.arrayContaining([

@@ -2,6 +2,8 @@
 
 Execution addendum (2026-10-06): The user's later instruction routes active implementation workers to GPT-6 Luna Speed (`gpt-6-luna`, `service_tier="fast"`, reasoning medium). An earlier worker used GPT-5.6 Luna before the supervisor stopped it; that historical use and preserved work are recorded in `.superpowers/sdd/2026-10-06-mcp-tool-discovery/progress.md`. Continue from preserved changes under the new routing; do not rewrite the prior attribution. Task-order ruling: server initialization guidance must not mention `tool.catalog.search` until Task 2 registers it; add that direction in Task 2.
 
+Task 1 review policy ruling (2026-10-06): verified service behavior takes precedence over the erroneous initial read-only catalog membership for `loan.cancel.preview`. It persists a preview, is mutating but non-destructive, and has no idempotency guarantee; remove it from `readOnlyTools`, the core-read profile, and the inherited idempotent set without changing the service. This makes the corrected core-read count 38 while full remains 146 after adding search. The other verified Task 1 corrections are guidance-only and must reflect actual schemas/services.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task in the supervised tmux worker. Steps use checkbox (`- [ ]`) syntax for tracking. Repository tmux/model-routing instructions take precedence over generic execution suggestions.
 
 **Goal:** Make CreditSync's full tool catalog discoverable, accurately guided, profile-aware, synchronized, and verified, including `loan.schedule.defer`.
@@ -76,6 +78,7 @@ Status: approved on 2026-10-06; Tasks 1–2 complete in commits, Tasks 3–6 rem
 - [x] In `executeMcpToolCall`, inject server-selected profile/catalog/workflow context for this metadata handler only after schema validation, as for `workflow.resolve`. Reject attempts to send `profile`, `tenantId`, `__profile`, or execution fields in public input. Add default handler without product REST or a generic executor.
 - [x] Verify legacy and modern transport calls return schema-valid results, denied malformed inputs never invoke the handler, and no financial/audit envelope is attached to search results.
 - [x] Update changelog and commit search registration, tests, and public behavior together.
+- [x] Complete Task 1 review corrections and Task 2 follow-ups: real bounded output enums/maxima; strict cursor key, overflow, cross-snapshot, and ranked-result bounds; full serving metadata filtered by server-selected profile; bilingual high-risk phrase distinctions; valid closed-input tests for both transports with handler/audit lookup guards; accurate preview/confirmation/retry/source attribution guidance. Leave plugin artifacts for Task 5.
 
 ## Task 3: register and safely guide installment deferral
 

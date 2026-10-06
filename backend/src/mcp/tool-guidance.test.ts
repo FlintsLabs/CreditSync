@@ -55,8 +55,17 @@ describe("MCP tool guidance registry", () => {
         expect(TOOL_GUIDANCE["loan.commission.reverse"].requiresHumanConfirmation).toBe(false);
         expect(TOOL_GUIDANCE["payment.preview"].sideEffects.join(" ")).toMatch(/persist/i);
         expect(TOOL_GUIDANCE["loan.settlement.preview"].sideEffects.join(" ")).toMatch(/persist/i);
-        expect(TOOL_GUIDANCE["loan.cancel.preview"].sideEffects).toEqual([]);
+        expect(TOOL_GUIDANCE["loan.cancel.preview"].sideEffects.join(" ")).toMatch(/persist/i);
+        expect(TOOL_GUIDANCE["loan.cancel.preview"].retrySafety).toMatch(/not idempotent/i);
         expect(TOOL_GUIDANCE["funding-allocation.preview"].sideEffects).toEqual([]);
+        expect(TOOL_GUIDANCE["loan.payment-start-date.update"].whenToUse.join(" ")).toMatch(/explicit human confirmation/i);
+        expect(TOOL_GUIDANCE["loan.payment-start-date.update"].requiresHumanConfirmation).toBe(true);
+        expect(TOOL_GUIDANCE["payment.evidence-recovery.preview"].whenToUse.join(" ")).toMatch(/expectedCount is below/i);
+        expect(TOOL_GUIDANCE["payment.evidence-recovery.preview"].requiresHumanConfirmation).toBe(true);
+        expect(TOOL_GUIDANCE["funding-allocation.create"].retrySafety).toMatch(/without sending an idempotencyKey/i);
+        expect(TOOL_GUIDANCE["funding-allocation.create"].requiresHumanConfirmation).toBe(true);
+        expect(TOOL_GUIDANCE["funding-allocation.preview"].prerequisites.join(" ")).toMatch(/XOR/i);
+        expect(TOOL_GUIDANCE["payment.intermediary-attribution.create"].prerequisites.join(" ")).toMatch(/sourceKind=intermediary/i);
         expect(TOOL_GUIDANCE["payment.restore.create"].prerequisites.join(" ")).toMatch(/reversed/i);
         expect(TOOL_GUIDANCE["payment.replacement.create"].prerequisites.join(" ")).toMatch(/cancelled|canceled/i);
         expect(TOOL_GUIDANCE["payment.restore.create"].searchTerms.th).not.toEqual(TOOL_GUIDANCE["payment.replacement.create"].searchTerms.th);

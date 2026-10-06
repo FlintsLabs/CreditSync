@@ -4,7 +4,7 @@ const readOnly = [
     "borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context",
     "system.error-diagnostic.get", "system.error-diagnostic.list", "borrower.search", "borrower.portfolio",
     "intake.get", "intake.list", "payment.replacement.inspect", "payment.batch.get", "payment.batch.workspace", "payment.batch.candidates",
-    "loan.preview", "loan.cancel.preview", "loan.interest-rate.list",
+    "loan.preview", "loan.interest-rate.list",
     "loan.disbursement.list", "loan.contract.get", "loan.payment-history.list", "loan.commission-participant.list",
     "loan.commission.preview", "loan.commission.list", "loan.commission.calculate", "loan.commission.reverse",
     "payment.intermediary-attribution.list", "intermediary.search", "intermediary.profile.get", "intermediary.managed-loan.list",

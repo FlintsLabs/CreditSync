@@ -88,6 +88,7 @@ async function startServer(input: {
     runtimeConfig?: McpRuntimeConfig;
     logs?: Array<Record<string, unknown>>;
     auditPublicIds?: string[];
+    onFindAudit?: () => void;
     persistDiagnostic?: CreateMcpHttpPluginInput["persistDiagnostic"];
     parseToolInput?: CreateMcpHttpPluginInput["parseToolInput"];
     logger?: (entry: Record<string, unknown>) => void;
@@ -105,7 +106,7 @@ async function startServer(input: {
             return { tenantId, actorUserId: 7 };
         }),
         consumeRateLimit: input.consumeRateLimit ?? (async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 })),
-        findAuditPublicIds: async () => input.auditPublicIds ?? [AUDIT_ID],
+        findAuditPublicIds: async () => { input.onFindAudit?.(); return input.auditPublicIds ?? [AUDIT_ID]; },
         logger: input.logger ?? ((entry) => input.logs?.push(entry)),
         onMetric: input.onMetric,
         persistDiagnostic: input.persistDiagnostic,
@@ -127,21 +128,26 @@ function clientFor(baseUrl: string, token = TOKEN) {
 describe("CreditSync stateless MCP contract", () => {
     test("legacy MCP tool catalog search returns metadata without audit fields and rejects spoofed context", async () => {
         let calls = 0;
+        let auditLookups = 0;
         const baseUrl = await startServer({ toolHandlers: {
             "tool.catalog.search": async (_ctx, input) => {
                 calls += 1;
                 return { profile: input.__profile, catalogVersion: input.__catalogVersion, guidanceVersion: "test-guidance", status: "matches", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };
             },
-        } });
+        }, onFindAudit: () => { auditLookups += 1; } });
         const { client, transport } = clientFor(baseUrl);
         await client.connect(transport);
         const result = await client.callTool({ name: "tool.catalog.search", arguments: { query: "ค้นหาผู้กู้" } });
         expect(result.isError).not.toBe(true);
         expect((result.structuredContent as any).data).toMatchObject({ profile: "full", status: "matches" });
         expect((result.structuredContent as any)).not.toHaveProperty("auditPublicIds");
-        const spoofed = await client.callTool({ name: "tool.catalog.search", arguments: { query: "borrower", profile: "admin" } as any });
-        expect(spoofed.isError).toBe(true);
+        expect((result.content as Array<{ text?: string }>)[0]?.text).toContain("Capability search status: matches");
+        for (const key of ["tenantId", "actor", "profile", "__profile", "operation"]) {
+            const spoofed = await client.callTool({ name: "tool.catalog.search", arguments: { query: "borrower", [key]: key === "operation" ? "payment.post" : "spoof" } as any });
+            expect(spoofed.isError).toBe(true);
+        }
         expect(calls).toBe(1);
+        expect(auditLookups).toBe(0);
         await client.close();
     });
 
@@ -541,9 +547,9 @@ describe("CreditSync stateless MCP contract", () => {
             openWorldHint: false,
         });
         expect(listed.tools.find((tool) => tool.name === "loan.cancel.preview")?.annotations).toMatchObject({
-            readOnlyHint: true,
+            readOnlyHint: false,
             destructiveHint: false,
-            idempotentHint: true,
+            idempotentHint: false,
             openWorldHint: false,
         });
         expect(listed.tools.find((tool) => tool.name === "loan.cancel.execute")?.annotations).toMatchObject({

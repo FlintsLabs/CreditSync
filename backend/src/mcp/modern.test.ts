@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 function startModernServer(
-    observed: { input?: Record<string, unknown>; captureInput?: Record<string, unknown>; captureIdempotency?: string; catalogInput?: Record<string, unknown>; calls?: number },
+    observed: { input?: Record<string, unknown>; captureInput?: Record<string, unknown>; captureIdempotency?: string; catalogInput?: Record<string, unknown>; calls?: number; auditLookups?: number },
     profiles: readonly ("full" | "core-read")[] = ["full"],
 ) {
     const handlers = Object.fromEntries(MCP_TOOL_NAMES.map((name) => [name, async (ctx: CommandContext, input: Record<string, unknown>) => {
@@ -50,7 +50,7 @@ function startModernServer(
         handlers,
         resolvePrincipal: async ({ tenantId }) => ({ tenantId, actorUserId: 7 }),
         consumeRateLimit: async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 }),
-        findAuditPublicIds: async () => ["0198c481-3e2b-7000-8000-000000000003"],
+        findAuditPublicIds: async () => { observed.auditLookups = (observed.auditLookups ?? 0) + 1; return ["0198c481-3e2b-7000-8000-000000000003"]; },
         logger: () => undefined,
     };
     const app = new Elysia();
@@ -106,16 +106,19 @@ async function rawRequestAt(baseUrl: string, path: string, body: Record<string, 
 
 describe("MCP 2026 transport adapter", () => {
     test("catalog search validates closed public input, injects trusted metadata, and returns no audit envelope", async () => {
-        const observed: { catalogInput?: Record<string, unknown>; calls?: number } = {};
+        const observed: { catalogInput?: Record<string, unknown>; calls?: number; auditLookups?: number } = {};
         const baseUrl = startModernServer(observed);
         const good = await rawRequest(baseUrl, modernEnvelope("tools/call", { name: "tool.catalog.search", arguments: { query: "ค้นหาผู้กู้" } }));
         expect(good.body.result.structuredContent.data).toMatchObject({ status: "matches", matches: [] });
         expect(good.body.result.structuredContent).not.toHaveProperty("auditPublicIds");
         expect(good.body.result.content[0].text).toContain("No other tool was executed");
+        expect(observed.auditLookups ?? 0).toBe(0);
         expect(observed.catalogInput).toMatchObject({ query: "ค้นหาผู้กู้", __profile: "full", __catalogVersion: MCP_CATALOG_VERSION });
         const calls = observed.calls;
-        const spoofed = await rawRequest(baseUrl, modernEnvelope("tools/call", { name: "tool.catalog.search", arguments: { query: "borrower", profile: "admin", tenantId: "spoof", __profile: "admin" } }));
-        expect(spoofed.body.error).toBeDefined();
+        for (const key of ["tenantId", "actor", "profile", "__profile", "operation"]) {
+            const spoofed = await rawRequest(baseUrl, modernEnvelope("tools/call", { name: "tool.catalog.search", arguments: { query: "borrower", [key]: key === "operation" ? "payment.post" : "spoof" } }));
+            expect(spoofed.body.error).toBeDefined();
+        }
         expect(observed.calls).toBe(calls);
     });
     test("advertises and dispatches read-only workflow resolution through full and curated modern profiles", async () => {
