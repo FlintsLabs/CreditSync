@@ -2,17 +2,17 @@
 
 ## Independent final acceptance — 2026-10-07
 
-The remote controller independently reviewed the implementation at `782a0b361409233956d6cb87edaa4ddbc40d10c2` on `codex/mcp-tool-discovery`. The recorded gate bundle is `/home/flintstone/.local/state/creditsync/mcp-tool-discovery-20261006/independent-gates-1.json`; each entry names this exact tested HEAD and exit code 0. The logs remain outside Git. This section supersedes the earlier gate status below; the earlier results are retained as history.
+The remote controller independently reviewed the implementation at `b08c694e3001dbd561d2d49b5c535ca3b487787e` on `codex/mcp-tool-discovery`. The latest final gate bundle is `/home/flintstone/.local/state/creditsync/mcp-tool-discovery-20261006/independent-gates-2.json`; all 11 entries name this exact tested HEAD and exit code 0. The logs remain outside Git. This section supersedes the earlier gate status below; both earlier gate bundles and the blocked first conformance attempt are retained as history.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Serialized disposable PostgreSQL backend suite | **Pass**, exit 0 | `independent-1-backend-disposable.log`; disposable helper completed. The earlier detailed run recorded 1,291 pass markers, 0 failures, and 3 cache-dependent skips across 167 files; required deferral integration coverage executed. |
-| Backend typecheck | **Pass**, exit 0 | `independent-1-backend-typecheck.log` (`tsc --noEmit`). |
-| Frontend tests, lint, and build | **Pass**, exit 0 | `independent-1-frontend-tests.log` records 67 files / 316 tests passed; lint and build logs also exit 0. Build retains the existing large-chunk warning. |
-| Plugin tests and validator | **Pass**, exit 0 | `independent-1-plugin-tests.log` records 61 tests / 1,955 assertions; validator log confirms the generated plugin contract. |
-| Discovery evaluation and benchmark | **Pass**, exit 0 | `independent-1-discovery-evaluation.log` and `independent-1-discovery-benchmark.log`; synthetic metadata evaluation only, `modelEvaluation: not_run`. |
-| Snapshot reproducibility | **Pass**, exit 0 | `independent-1-reproducibility.log`; two generations were byte-identical. |
-| MCP conformance | **Pass**, exit 0 | `independent-1-mcp-conformance.log` and `conformance-setup-recheck.log`; pinned upstream `7169291ec0b68eb370fddcd9947313ab0d5e4156` / `0.2.0-alpha.11`, 6/6 scenarios and 58/58 checks passed. The fixture is synthetic and reports no database side effects. |
+| Serialized disposable PostgreSQL backend suite | **Pass**, exit 0 | `independent-2-backend-disposable.log`; disposable helper completed. The detailed run recorded 1,291 pass markers, 0 failures, and 3 cache-dependent skips across 167 files; required deferral integration coverage executed. |
+| Backend typecheck | **Pass**, exit 0 | `independent-2-backend-typecheck.log` (`tsc --noEmit`). |
+| Frontend tests, lint, and build | **Pass**, exit 0 | `independent-2-frontend-tests.log` records 67 files / 316 tests passed; `independent-2-frontend-lint.log` and `independent-2-frontend-build.log` also exit 0. Build retains the existing large-chunk warning. |
+| Plugin tests and validator | **Pass**, exit 0 | `independent-2-plugin-tests.log` records 61 tests / 1,955 assertions; `independent-2-plugin-validator.log` confirms the generated plugin contract. |
+| Discovery evaluation and benchmark | **Pass**, exit 0 | `independent-2-discovery-evaluation.log` and `independent-2-discovery-benchmark.log`; synthetic metadata evaluation only, `modelEvaluation: not_run`. |
+| Snapshot reproducibility | **Pass**, exit 0 | `independent-2-reproducibility.log`; two generations were byte-identical. |
+| MCP conformance | **Pass**, exit 0 | `independent-2-mcp-conformance.log` and `conformance-setup-recheck.log`; pinned upstream `7169291ec0b68eb370fddcd9947313ab0d5e4156` / `0.2.0-alpha.11`, 6/6 scenarios and 58/58 checks passed. The fixture is synthetic and reports no database side effects. |
 
 The earlier 2026-10-06 conformance attempt below remains a historical blocked result: its checkout lacked `commander`. The independent recheck used an already available checkout and completed without installing a new dependency. There are no currently blocked gates in the evidence bundle. Live production catalog alignment, client/host acceptance, and model tool-selection accuracy remain unverified; no production MCP or financial records were accessed.
 

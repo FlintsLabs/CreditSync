@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.68 - 2026-10-07
+
+### Fixed
+
+- Updated the MCP discovery verification report to cite the latest 11-gate independent bundle at the final acceptance HEAD, including the passing pinned conformance run; retained the earlier blocked attempt as history.
+
 ## v0.4.67 - 2026-10-07
 
 ### Changed
