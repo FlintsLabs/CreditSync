@@ -10,6 +10,10 @@
 
 - Set the repository's tmux implementation-worker model to `gpt-6-luna` with medium reasoning effort.
 
+### Infra
+
+- Excluded local environment files and installed dependencies from the backend Docker build context.
+
 ## v0.4.64 - 2026-10-06
 
 ### Added
