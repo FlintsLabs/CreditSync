@@ -972,6 +972,8 @@ describe("CreditSync stateless MCP contract", () => {
         expect(transport.sessionId).toBeUndefined();
         const listed = await client.listTools();
         expect(listed.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
+        const expectedDescriptions = new Map<string, string>(advertisedMcpToolMetadata().map((tool) => [tool.name, tool.description]));
+        for (const tool of listed.tools) expect(tool.description).toBe(expectedDescriptions.get(tool.name));
         expect(listed.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
         expect(listed.tools.every((tool) => {
             const properties = tool.inputSchema.properties as Record<string, unknown> | undefined;

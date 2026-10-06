@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.64 - 2026-10-06
+
+### Added
+
+- Added typed, immutable, exhaustive MCP guidance for the existing 145-tool catalog, canonical content hashing, shared descriptions and initialization instructions across transports, capability-specific relationships, conditional borrower inputs, and safe retry/confirmation guidance. Updated authorized implementation-worker routing to GPT-6 Luna Speed with medium reasoning and Fast tier.
+
 ## v0.4.63 - 2026-09-25
 
 ### Added

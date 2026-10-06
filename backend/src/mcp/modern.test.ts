@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { Elysia } from "elysia";
 import type { CommandContext } from "../services/command-context";
-import { createMcpHttpPlugin, MCP_CATALOG_VERSION, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
+import { advertisedMcpToolMetadata, createMcpHttpPlugin, MCP_CATALOG_VERSION, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
 import { toolNamesForProfile } from "./tool-profiles";
 import type { McpRuntimeConfig } from "./security";
 
@@ -128,6 +128,8 @@ describe("MCP 2026 transport adapter", () => {
         expect(discovery.capabilities.tools).toBeDefined();
         const listed = await client.listTools();
         expect(listed.tools.length).toBe(MCP_TOOL_NAMES.length);
+        const expectedDescriptions = new Map<string, string>(advertisedMcpToolMetadata().map((tool) => [tool.name, tool.description]));
+        for (const tool of listed.tools) expect(tool.description).toBe(expectedDescriptions.get(tool.name));
         const result = await client.callTool({ name: "borrower.search", arguments: { query: "borrower" } });
         expect(result.isError).not.toBe(true);
         expect(observed.input).toEqual({ query: "borrower" });
