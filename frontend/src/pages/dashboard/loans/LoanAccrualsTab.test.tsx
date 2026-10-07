@@ -1,19 +1,52 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { LoanAccrualsTab, type LoanAccrualRow } from "./LoanAccrualsTab";
+
+let testLanguage: "en" | "th" = "en";
+const testTranslations: Record<"en" | "th", Record<string, string>> = {
+    en: {
+        "loanDetail.accrualPayment.pay": "Pay",
+        "payments.preview": "Preview",
+        "loanDetail.accrualPayment.continueRecovery": "Continue receipt recovery",
+        "loanDetail.accrualPayment.retry": "Retry payment",
+        "loanDetail.accrualPayment.recoveryAvailable": "A posted receipt is saved and needs loan history recovery.",
+        "loanDetail.accrualPayment.errors.historicalConflict": "This historical receipt conflicts with a later live payment.",
+        "loanDetail.accrualPayment.errors.futureReceipt": "The actual receipt time cannot be in the future.",
+        "loanDetail.accrualPayment.errors.accrualAfterReceipt": "This interest date is later than the actual receipt date.",
+        "loanDetail.accrualPayment.errors.retryAccessRecovery": "Access could not be verified. This saved payment may already be posted; restore access and retry this same payment.",
+        "loanDetail.accrualPayment.errors.previewStale": "This preview is stale. Review the dates and create a fresh preview.",
+        "loanDetail.accrualPayment.blockers.duplicateReview": "A matching payment needs review before this receipt can proceed.",
+        "loanDetail.accrualPayment.blockers.allocationWarning": "The proposed amount does not match an eligible obligation.",
+    },
+    th: {
+        "loanDetail.accrualPayment.pay": "รับชำระ",
+        "payments.preview": "ตรวจสอบ",
+        "loanDetail.accrualPayment.continueRecovery": "ดำเนินการกู้คืนรายการรับชำระ",
+        "loanDetail.accrualPayment.retry": "ลองตรวจสอบรายการเดิมอีกครั้ง",
+        "loanDetail.accrualPayment.recoveryAvailable": "บันทึกรายการรับชำระแล้วและต้องกู้คืนประวัติสินเชื่อ",
+        "loanDetail.accrualPayment.errors.historicalConflict": "วันรับชำระย้อนหลังขัดกับรายการภายหลังที่ยังมีผล โปรดกระทบยอดก่อน",
+        "loanDetail.accrualPayment.errors.futureReceipt": "เวลารับเงินจริงต้องไม่อยู่ในอนาคต",
+        "loanDetail.accrualPayment.errors.accrualAfterReceipt": "วันที่เกิดดอกเบี้ยต้องไม่อยู่หลังวันที่รับเงินจริง",
+        "loanDetail.accrualPayment.errors.retryAccessRecovery": "ตรวจสอบสิทธิ์ไม่ได้ รายการที่บันทึกไว้อาจลงบัญชีแล้ว โปรดคืนสิทธิ์และลองรายการเดิมอีกครั้ง",
+        "loanDetail.accrualPayment.errors.previewStale": "ผลตรวจสอบหมดอายุ โปรดตรวจวันที่และสร้างผลตรวจใหม่",
+        "loanDetail.accrualPayment.blockers.duplicateReview": "พบรายการรับชำระที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ",
+        "loanDetail.accrualPayment.blockers.allocationWarning": "ยอดที่เสนอไม่ตรงกับภาระที่รับชำระได้",
+    },
+};
 
 vi.mock("../../../lib/api", () => ({ api: { post: vi.fn() } }));
 import { api } from "../../../lib/api";
 
 vi.mock("react-i18next", () => ({
     useTranslation: () => ({
-        t: (_key: string, fallback?: string) => typeof fallback === "string" ? fallback : _key,
-        i18n: { language: "th-TH" },
+        t: (key: string, fallback?: string) => testTranslations[testLanguage][key] ?? (typeof fallback === "string" ? fallback : key),
+        i18n: { get language() { return testLanguage; } },
     }),
 }));
 
 describe("LoanAccrualsTab", () => {
+    beforeEach(() => { testLanguage = "en"; });
     // Break caught: missing projected rows, double-counted reversals, or incorrect current totals.
     test("renders every daily row and exact totals while preserving reversal history", () => {
         const dates = ["2026-09-24", "2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30",
@@ -27,7 +60,7 @@ describe("LoanAccrualsTab", () => {
         rows.push({ ...rows[0], publicId: "reversed-row", interestAmount: "100.00", paidAmount: "0.00", remainingAmount: "100.00", status: "reversed" });
         render(<MemoryRouter><LoanAccrualsTab rows={rows} /></MemoryRouter>);
         expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(16);
-        expect(screen.getByRole("cell", { name: "7 ต.ค. 2569" })).toBeTruthy();
+        expect(screen.getByRole("cell", { name: "Oct 7, 2026" })).toBeTruthy();
         expect(screen.getByText("total").parentElement?.textContent).toContain("1,120.00");
         const summary = screen.getByText("total").parentElement!.parentElement!;
         expect(within(summary).getByText("paid").parentElement?.textContent).toContain("80.00");
@@ -107,5 +140,130 @@ describe("LoanAccrualsTab", () => {
         await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
         expect(localStorage.getItem(`creditsync:selected-accrual:${loanPublicId}`)).toBeNull();
         expect(screen.getAllByRole("button", { name: "Pay" })).toHaveLength(2);
+    });
+
+    test("recovers an expired 900-second preview by re-previewing the same intake", async () => {
+        vi.mocked(api.post).mockClear();
+        const loanPublicId = "loan-expired-preview";
+        const storageKey = `creditsync:selected-accrual:${loanPublicId}`;
+        localStorage.removeItem(storageKey);
+        const rows: LoanAccrualRow[] = [{ publicId: "expired-day", accrualDate: "2026-10-02", periodStartDate: "2026-10-02", periodEndDate: null, periodUnit: "day", periodDayIndex: 1, interestAmount: "80.00", paidAmount: "0.00", remainingAmount: "80.00", status: "accrued" }];
+        vi.mocked(api.post).mockImplementation(async (url) => {
+            if (String(url).endsWith("/preview")) return { data: { publicId: "fresh-proposal", paymentIntakePublicId: "same-intake", status: "ready", warnings: [], totalAllocated: "80.00", targets: [{ accrualDate: "2026-10-02", amount: "80.00" }] } } as never;
+            return { data: { publicId: "same-intake", receiptPublicId: "ttl-receipt", auditPublicId: "ttl-audit", correlationId: "ttl-corr", status: "posted" } } as never;
+        });
+        const view = render(<MemoryRouter><LoanAccrualsTab rows={rows} loanPublicId={loanPublicId} /></MemoryRouter>);
+        fireEvent.click(screen.getByRole("button", { name: "Pay" }));
+        fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+        await screen.findByRole("button", { name: "Confirm payment" });
+        vi.mocked(api.post).mockRejectedValueOnce({ response: { status: 409, data: { code: "STALE_PAYMENT_PROPOSAL", error: "expired" } } });
+        fireEvent.click(screen.getByRole("button", { name: "Confirm payment" }));
+        await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("This preview is stale. Review the dates and create a fresh preview."));
+        expect(screen.queryByRole("button", { name: "Retry payment" })).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+        await screen.findByRole("button", { name: "Confirm payment" });
+        const previewCalls = vi.mocked(api.post).mock.calls.filter(([url]) => String(url).endsWith("/preview"));
+        expect(previewCalls).toHaveLength(2);
+        expect(previewCalls[1]?.[1]).toMatchObject({ paymentIntakePublicId: "same-intake", targets: [{ accrualDate: "2026-10-02", amount: "80.00" }] });
+        fireEvent.click(screen.getByRole("button", { name: "Confirm payment" }));
+        await waitFor(() => expect(localStorage.getItem(storageKey)).toBeNull());
+        expect(vi.mocked(api.post).mock.calls.filter(([url]) => String(url).endsWith("/post"))).toHaveLength(2);
+        view.unmount();
+    });
+
+    test("recovers a committed post after a lost response without rotating identity across reload or edits", async () => {
+        vi.mocked(api.post).mockClear();
+        const loanPublicId = "00000000-0000-4000-8000-000000000101";
+        const storageKey = `creditsync:selected-accrual:${loanPublicId}`;
+        localStorage.removeItem(storageKey);
+        const rows: LoanAccrualRow[] = [{ publicId: "lost-response-day", accrualDate: "2026-10-02", periodStartDate: "2026-10-02", periodEndDate: null, periodUnit: "day", periodDayIndex: 1, interestAmount: "80.00", paidAmount: "0.00", remainingAmount: "80.00", status: "accrued" }];
+        const paidRows = [{ ...rows[0]!, paidAmount: "80.00", remainingAmount: "0.00", status: "paid" }];
+        let postedReceipt: string | undefined;
+        let deniedAttempts = 0;
+        let accessRestored = false;
+        let postCount = 0;
+        const postKeys: string[] = [];
+        const postBodies: unknown[] = [];
+        vi.mocked(api.post).mockImplementation(async (url, body, config) => {
+            if (String(url).endsWith("/preview")) return { data: { publicId: "proposal-lost", paymentIntakePublicId: "intake-lost", status: "ready", warnings: [], totalAllocated: "80.00", targets: [{ accrualDate: "2026-10-02", amount: "80.00" }] } } as never;
+            postCount += 1;
+            postKeys.push(String(config?.headers?.["Idempotency-Key"]));
+            postBodies.push(body);
+            if (!postedReceipt) {
+                const pending = JSON.parse(localStorage.getItem(storageKey) ?? "null") as { postStatus?: string; postKey?: string; preview?: { publicId?: string } } | null;
+                expect(pending).toMatchObject({ postStatus: "pending", preview: { publicId: "proposal-lost" } });
+                postedReceipt = "receipt-once";
+                throw new Error("connection reset after server commit");
+            }
+            if (!accessRestored && deniedAttempts === 0) { deniedAttempts += 1; throw { response: { status: 401, data: { code: "UNAUTHORIZED", error: "raw auth detail" } } }; }
+            if (!accessRestored && deniedAttempts === 1) { deniedAttempts += 1; throw { response: { status: 404, data: { code: "PAYMENT_INTAKE_NOT_FOUND", error: "raw access detail" } } }; }
+            return { data: { publicId: "intake-lost", receiptPublicId: postedReceipt, auditPublicId: "audit-lost", correlationId: "corr-lost", status: "posted" } } as never;
+        });
+        const onRefresh = vi.fn().mockResolvedValue(undefined);
+        const firstView = render(<MemoryRouter><LoanAccrualsTab rows={rows} loanPublicId={loanPublicId} onRefresh={onRefresh} /></MemoryRouter>);
+        fireEvent.click(screen.getByRole("button", { name: "Pay" }));
+        fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+        await screen.findByRole("button", { name: "Confirm payment" });
+        fireEvent.click(screen.getByRole("button", { name: "Confirm payment" }));
+        await screen.findByRole("button", { name: "Retry payment" });
+        expect(screen.getByText(/status is unknown/i)).toBeTruthy();
+        const persisted = JSON.parse(localStorage.getItem(storageKey)!) as { postKey: string; postStatus: string; preview: { publicId: string } };
+        expect(screen.queryByRole("textbox")).toBeNull();
+        firstView.rerender(<MemoryRouter><LoanAccrualsTab rows={paidRows} loanPublicId={loanPublicId} onRefresh={onRefresh} /></MemoryRouter>);
+        expect(screen.getByText(/status is unknown/i)).toBeTruthy();
+        fireEvent.click(await screen.findByRole("button", { name: "Retry payment" }));
+        await waitFor(() => expect(screen.getByText(/restore access and retry this same payment/i)).toBeTruthy());
+        fireEvent.click(await screen.findByRole("button", { name: "Retry payment" }));
+        await waitFor(() => expect(screen.getByText(/restore access and retry this same payment/i)).toBeTruthy());
+        expect(JSON.parse(localStorage.getItem(storageKey)!).postKey).toBe(persisted.postKey);
+        expect(postCount).toBe(3);
+        fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+        expect(screen.getByRole("button", { name: "Continue receipt recovery" })).toBeTruthy();
+        firstView.unmount();
+        accessRestored = true;
+        render(<MemoryRouter><LoanAccrualsTab rows={paidRows} loanPublicId={loanPublicId} onRefresh={onRefresh} /></MemoryRouter>);
+        fireEvent.click(screen.getByRole("button", { name: "Continue receipt recovery" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Retry payment" }));
+        await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+        expect(postCount).toBe(4);
+        expect(postKeys).toEqual([persisted.postKey, persisted.postKey, persisted.postKey, persisted.postKey]);
+        expect(postBodies[0]).toEqual(postBodies[1]);
+        expect(postBodies[1]).toEqual(postBodies[2]);
+        expect(postBodies[2]).toEqual(postBodies[3]);
+        expect(postedReceipt).toBe("receipt-once");
+        expect(localStorage.getItem(storageKey)).toBeNull();
+    });
+
+    test("translates safe date errors and warnings without rendering server detail", async () => {
+        const rows: LoanAccrualRow[] = [{ publicId: "day-safe-errors", accrualDate: "2026-10-02", periodStartDate: "2026-10-02", periodEndDate: null, periodUnit: "day", periodDayIndex: 1, interestAmount: "80.00", paidAmount: "0.00", remainingAmount: "80.00", status: "accrued" }];
+        for (const language of ["en", "th"] as const) {
+            testLanguage = language;
+            localStorage.removeItem(`creditsync:selected-accrual:loan-translations-${language}`);
+            vi.mocked(api.post).mockRejectedValueOnce({ response: { status: 409, data: { code: "ACCRUAL_AFTER_RECEIPT", error: "SECRET SERVER DETAIL", details: { bankReference: "SECRET-REFERENCE" } } } });
+            const view = render(<MemoryRouter><LoanAccrualsTab rows={rows} loanPublicId={`loan-translations-${language}`} /></MemoryRouter>);
+            fireEvent.click(screen.getByRole("button", { name: language === "en" ? "Pay" : "รับชำระ" }));
+            fireEvent.click(screen.getByRole("button", { name: language === "en" ? "Preview" : "ตรวจสอบ" }));
+            await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(testTranslations[language]["loanDetail.accrualPayment.errors.accrualAfterReceipt"]));
+            expect(screen.queryByText(/SECRET/)).toBeNull();
+            view.unmount();
+        }
+        testLanguage = "en";
+    });
+
+    test("renders known warnings in the active language without server identifiers", async () => {
+        const rows: LoanAccrualRow[] = [{ publicId: "day-warning", accrualDate: "2026-10-02", periodStartDate: "2026-10-02", periodEndDate: null, periodUnit: "day", periodDayIndex: 1, interestAmount: "80.00", paidAmount: "0.00", remainingAmount: "80.00", status: "accrued" }];
+        for (const language of ["en", "th"] as const) {
+            testLanguage = language;
+            vi.mocked(api.post).mockResolvedValueOnce({ data: { publicId: "warning-proposal", paymentIntakePublicId: "warning-intake", status: "review_required", warnings: [{ code: "POSSIBLE_SEMANTIC_DUPLICATE", intakePublicIds: ["SECRET-ID"] }], totalAllocated: "80.00" } } as never);
+            const view = render(<MemoryRouter><LoanAccrualsTab rows={rows} loanPublicId={`loan-warning-${language}`} /></MemoryRouter>);
+            fireEvent.click(screen.getByRole("button", { name: language === "en" ? "Pay" : "รับชำระ" }));
+            fireEvent.click(screen.getByRole("button", { name: language === "en" ? "Preview" : "ตรวจสอบ" }));
+            const expected = language === "en" ? "A matching payment needs review before this receipt can proceed." : "พบรายการรับชำระที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ";
+            await waitFor(() => expect(screen.getByText(expected)).toBeTruthy());
+            expect(screen.queryByText(/POSSIBLE_SEMANTIC_DUPLICATE|SECRET-ID/)).toBeNull();
+            expect(screen.queryByRole("button", { name: language === "en" ? "Confirm payment" : "ยืนยันรับชำระ" })).toBeNull();
+            view.unmount();
+        }
+        testLanguage = "en";
     });
 });

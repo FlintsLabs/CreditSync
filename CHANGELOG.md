@@ -10,6 +10,9 @@
 ### Fixed
 
 - Repaired the pre-existing duplicate Drizzle snapshot UUID/parent chain in snapshots 0057/0058 so generated migration metadata can advance consistently; schema tables were unchanged by that metadata repair.
+- Preserved full 29-digit THB precision in floating allocation integrity checks, including partially paid accruals with a remaining satang value.
+- Kept selected-payment command identity through uncertain authorization failures and allowed an authenticated stale proposal to return safely to a fresh preview of the same intake; translated the future-receipt and accrual-after-receipt blockers.
+- Corrected the earlier hypothetical legacy-baseline test fixture: migration 0030 cutover and the deferred paid-cache trigger require matching allocation lineage, so the unsupported cache-only state was not a production defect. Current-capacity checks use real receipts and valid allocation provenance.
 
 ## v0.4.69 - 2026-10-07
 

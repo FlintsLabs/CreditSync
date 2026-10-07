@@ -4,9 +4,12 @@ const loanId = "019c3a5a-94ce-7f2c-8b08-f56852dca7a1";
 const borrowerId = "019c3a5a-94ce-7f2c-8b08-f56852dca7a2";
 test.use({ timezoneId: "America/Los_Angeles" });
 
-test("selected accrual review preserves Bangkok receipt time and a posted draft after refresh failure", async ({ page }) => {
+test("selected accrual review recovers an expired preview and a lost post across access and refresh failures", async ({ page }) => {
     const previewCommands: Array<{ body: Record<string, unknown>; headers: Record<string, string> }> = [];
+    const postCommands: Array<{ body: Record<string, unknown>; key: string }> = [];
     let postCount = 0;
+    const postKeys: string[] = [];
+    let expireFirstPost = false;
     let failOneRefresh = false;
     let loanLoads = 0;
     const loan = {
@@ -31,7 +34,15 @@ test("selected accrual review preserves Bangkok receipt time and a posted draft 
         else if (path === `/loans/${loanId}/accrual-payments/preview` && request.method() === "POST") {
             previewCommands.push({ body: request.postDataJSON(), headers: request.headers() });
             body = { id: "preview-row", publicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7a3", paymentIntakePublicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7a4", status: "ready", receivedAt: "2026-10-07T08:45:00.000Z", targets: [{ accrualDate: "2026-10-06", amount: "80.00" }], totalAllocated: "80.00", warnings: [], remainingDebt: { principal: "4000.00", fees: "0.00", interest: "80.00", penalty: "0.00" } };
-        } else if (path === `/loans/${loanId}/accrual-payments/post` && request.method() === "POST") { postCount++; failOneRefresh = true; body = { publicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7a4", receiptPublicId: "receipt-transaction", auditPublicId: "receipt-audit", correlationId: "receipt-correlation", status: "posted" }; }
+        } else if (path === `/loans/${loanId}/accrual-payments/post` && request.method() === "POST") {
+            postCount++;
+            postKeys.push(request.headers()["idempotency-key"] ?? "");
+            postCommands.push({ body: request.postDataJSON(), key: request.headers()["idempotency-key"] ?? "" });
+            if (postCount === 1 && expireFirstPost) { status = 409; body = { code: "STALE_PAYMENT_PROPOSAL", error: "Synthetic expired proposal" }; }
+            else if (postCount === 2) { await route.abort("connectionreset"); return; }
+            else if (postCount === 3) { status = 401; body = { code: "UNAUTHORIZED", error: "Synthetic auth detail" }; }
+            else { failOneRefresh = true; body = { publicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7a4", receiptPublicId: "receipt-transaction", auditPublicId: "receipt-audit", correlationId: "receipt-correlation", status: "posted" }; }
+        }
         else if (request.method() === "GET") body = [];
         else { status = 404; body = { error: `Unexpected synthetic endpoint ${path}` }; }
         await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
@@ -41,6 +52,7 @@ test("selected accrual review preserves Bangkok receipt time and a posted draft 
         localStorage.setItem("i18nextLng", "en");
         localStorage.setItem("user", JSON.stringify({ id: 1, name: "Synthetic owner", email: "owner@example.invalid", role: "owner", tenantId: "browser-accrual" }));
     });
+    await page.clock.install({ time: new Date("2026-10-07T08:45:00.000Z") });
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`/loans/${loanId}`);
     await page.waitForLoadState("networkidle");
@@ -60,10 +72,29 @@ test("selected accrual review preserves Bangkok receipt time and a posted draft 
     expect(previewCommands).toHaveLength(1);
     expect(previewCommands[0]!.body).toMatchObject({ amount: "80.00", receivedAt: "2026-10-07T08:45:00.000Z", targets: [{ accrualDate: "2026-10-06", amount: "80.00" }] });
     expect(previewCommands[0]!.headers["idempotency-key"]).toBeTruthy();
+    const previewClientTime = await page.evaluate(() => Date.now());
+    await page.clock.fastForward(900_001);
+    expect(await page.evaluate((startedAt) => Date.now() - startedAt, previewClientTime)).toBeGreaterThanOrEqual(900_000);
+    expireFirstPost = true;
     await dialog.getByRole("button", { name: "Confirm payment" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("This preview is stale");
+    await dialog.getByRole("button", { name: "Preview" }).click();
+    await expect(dialog.getByRole("button", { name: "Confirm payment" })).toBeVisible();
+    expect(previewCommands).toHaveLength(2);
+    expect(previewCommands[1]!.body).toMatchObject({ paymentIntakePublicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7a4", targets: [{ accrualDate: "2026-10-06", amount: "80.00" }] });
+    expect(previewCommands[1]!.headers["idempotency-key"]).not.toBe(previewCommands[0]!.headers["idempotency-key"]);
+    await dialog.getByRole("button", { name: "Confirm payment" }).click();
+    await expect(dialog.getByRole("button", { name: "Retry payment" })).toBeVisible();
+    expect(postCommands[0]!.body).toEqual(postCommands[1]!.body);
+    expect(postCommands[0]!.key).not.toBe(postCommands[1]!.key);
+    await dialog.getByRole("button", { name: "Retry payment" }).click();
+    await expect(dialog).toContainText("Access could not be verified. This saved payment may already be posted; restore access and retry this same payment.");
+    await dialog.getByRole("button", { name: "Retry payment" }).click();
     await expect(dialog).toContainText("Payment posted. The receipt remains saved for safe recovery.");
     await expect(dialog.getByRole("button", { name: "Refresh loan history" })).toBeVisible();
-    expect(postCount).toBe(1);
+    expect(postCount).toBe(4);
+    expect(postKeys[1]).not.toBe(postKeys[0]);
+    expect(postKeys.slice(1)).toEqual([postKeys[1], postKeys[1], postKeys[1]]);
     await dialog.getByRole("button", { name: "Refresh loan history" }).click();
     await expect(dialog).not.toBeVisible();
     expect(loanLoads).toBeGreaterThanOrEqual(3);

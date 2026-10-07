@@ -2,6 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { findFloatingAllocationIssues } from "./floating-allocation-integrity";
 
 describe("floating allocation integrity", () => {
+    test("keeps exact remaining cents for a 29-digit accrual with a matching partial allocation", () => {
+        const amount = "12345678901234567890999999989.25";
+        const paid = "12345678901234567890999999989.20";
+        expect(findFloatingAllocationIssues({
+            accruals: [{ id: 1, publicId: "large-accrual", accrualDate: "2026-10-01", interestAmount: amount, paidAmount: paid, status: "partially_paid", periodUnit: "day", periodDays: 1 }],
+            allocations: [{ id: 1, publicId: "large-allocation", interestAccrualId: 1, dueDate: "2026-10-01", effectiveDate: "2026-10-01", amount: paid, entryType: "payment", reversedAllocationId: null }],
+        })).toEqual([]);
+    });
+
     test("detects an active daily allocation pointing at the previous accrual date", () => {
         const issues = findFloatingAllocationIssues({
             accruals: [
