@@ -221,7 +221,7 @@ describe("TransactionForm", () => {
         await user.upload(input, [new File(["same-content"], "one.png", { type: "image/png" }), new File(["same-content"], "two.png", { type: "image/png" })]);
         await user.type(await screen.findByLabelText("Slip / receipt amount (฿)"), "100.00");
         await user.click(screen.getByRole("button", { name: "Review payment" }));
-        expect(await screen.findByText(/selected file is already associated with another receipt/i)).toBeInTheDocument();
+        expect(await screen.findByText(/same supporting file was selected more than once/i)).toBeInTheDocument();
         expect(api.post).not.toHaveBeenCalled();
         await user.click(screen.getByRole("button", { name: "Remove two.png" }));
         await user.click(screen.getByRole("button", { name: "Review payment" }));

@@ -387,6 +387,7 @@
             "totalBound": "The allocation total exceeds the public payment limit. Review the row amounts.",
             "DUPLICATE_PAYMENT": "This receipt matches an existing intake and requires review.",
             "IDEMPOTENCY_REPLAY_MISMATCH": "The saved receipt differs from this entry. Open it for review.",
+            "duplicateFiles": "The same supporting file was selected more than once. Remove the duplicate file and try again.",
             "DUPLICATE_EVIDENCE": "A selected file is already associated with another receipt. Review before continuing.",
             "EVIDENCE_HASH_FAILED": "Supporting files could not be checked locally. Remove or reselect the files and try again.",
             "EVIDENCE_UPLOAD_FAILED": "Evidence upload failed. Retry this saved receipt or open it for review.",

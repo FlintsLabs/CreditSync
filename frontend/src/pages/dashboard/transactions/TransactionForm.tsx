@@ -201,7 +201,8 @@ export default function TransactionForm() {
                 && failure.httpStatus !== undefined && failure.httpStatus >= 400 && failure.httpStatus < 500) setSubmittedSnapshot(null);
             const errorCode = failure.response?.data?.code ?? failure.code;
             const fallback = t("transactionsForm.errors.recordFailed", "Unable to save this receipt. Retry the same request or open its saved draft.");
-            const localKey = `transactionsForm.errors.${errorCode}`;
+            const localDuplicate = errorCode === "DUPLICATE_EVIDENCE" && !progress.intakePublicId && !failure.intakePublicId && !failure.reviewTargetPublicId;
+            const localKey = localDuplicate ? "transactionsForm.errors.duplicateFiles" : `transactionsForm.errors.${errorCode}`;
             const domainKey = `domainErrors.${errorCode}`;
             setErrorMessage(errorCode && i18n.exists(localKey) ? t(localKey)
                 : errorCode && i18n.exists(domainKey) ? t(domainKey) : fallback);
