@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Recorded the approved specification and implementation plan for selected-date floating daily interest payments with independent actual receipt timestamps and visible per-accrual receipt history.
 - Added the reviewed design for a production Bruno CLI collection covering borrower/loan inspection, floating daily-loan origination, and stepwise payment evidence and posting.
 - Integrated the six main-branch history commits while retaining the verified 147-tool discovery release, schedule-deferral workflow, and backend Docker context protections.
 - Synchronized the authenticated UI release footer with application `0.4.69`, MCP schema `1.0`, and the actual CreditSync plugin `12.0.0` manifest; point its changelog link at this release branch until it is integrated.
@@ -11,6 +12,7 @@
 
 ### Fixed
 
+- Show all floating-loan accrual days through the current Bangkok business date in Loan Detail using read-only backend projections, retain persisted reversal/prepayment history, and count daily advance interest only once in payment health.
 - Added a regression check that derives the displayed application version from the newest changelog heading and the plugin version from its manifest.
 
 ## v0.4.68 - 2026-10-07
