@@ -10,13 +10,14 @@ vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() }, resolve
 const loanPublicId = "11111111-1111-4111-8111-111111111111";
 const primaryFile = "22222222-2222-4222-8222-222222222222";
 const supplementFile = "33333333-3333-4333-8333-333333333333";
+const intakePublicId = "77777777-7777-4777-8777-777777777777";
 
 describe("loan payment history evidence", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(api.get).mockImplementation(async (url) => {
             if (url === "/transactions") return { data: [{
-                publicId: "44444444-4444-4444-8444-444444444444", loanPublicId,
+                publicId: "44444444-4444-4444-8444-444444444444", loanPublicId, paymentIntakePublicId: intakePublicId,
                 amount: "100.00", interestComponent: "10.00", date: "2026-09-07T01:00:00.000Z", type: "repayment",
                 evidence: [
                     { publicId: "55555555-5555-4555-8555-555555555555", filePublicId: primaryFile, mimeType: "image/png", source: "primary" },
@@ -36,6 +37,8 @@ describe("loan payment history evidence", () => {
         const primary = await screen.findByRole("button", { name: /primary slip/i });
         expect(screen.getByRole("button", { name: /supplemental slip.*upload channel unavailable/i })).toBeInTheDocument();
         expect(resolveFileAccess).not.toHaveBeenCalled();
+        expect(await screen.findByRole("link", { name: /view receipt/i })).toHaveAttribute("href", `/payments?intake=${intakePublicId}`);
+        expect(screen.getByTestId("payment-44444444-4444-4444-8444-444444444444")).toHaveTextContent("100.00");
         await userEvent.setup().click(primary);
         await waitFor(() => expect(resolveFileAccess).toHaveBeenCalledWith(primaryFile));
     });
@@ -51,5 +54,25 @@ describe("loan payment history evidence", () => {
         render(<LoanPaymentHistoryTab loanPublicId={loanPublicId} />);
         expect(await screen.findByText(/evidence unavailable/i)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /slip/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole("link", { name: /view receipt/i })).not.toBeInTheDocument();
+    });
+
+    it("shows each contract allocation amount and points shared receipt links to one intake", async () => {
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/transactions") return { data: [
+                { publicId: "44444444-4444-4444-8444-444444444444", loanPublicId, paymentIntakePublicId: intakePublicId, amount: "100.00", interestComponent: "10.00", date: "2026-09-07T01:00:00.000Z", type: "repayment", evidence: [{ publicId: "55555555-5555-4555-8555-555555555555", filePublicId: primaryFile, mimeType: "image/png", source: "primary" }] },
+                { publicId: "88888888-8888-4888-8888-888888888888", loanPublicId, paymentIntakePublicId: intakePublicId, amount: "200.00", interestComponent: "20.00", date: "2026-09-07T01:00:00.000Z", type: "repayment", evidence: [{ publicId: "55555555-5555-4555-8555-555555555555", filePublicId: primaryFile, mimeType: "image/png", source: "primary" }] },
+            ] };
+            if (url === "/intermediaries?status=all") return { data: { items: [] } };
+            if (url.includes("/intermediary-attributions")) return { data: [] };
+            if (url.includes("/commissions?")) return { data: { totalCommission: "0.00", participants: [] } };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        render(<LoanPaymentHistoryTab loanPublicId={loanPublicId} />);
+        const links = await screen.findAllByRole("link", { name: /view receipt/i });
+        expect(links).toHaveLength(2);
+        expect(links.map((link) => link.getAttribute("href"))).toEqual([`/payments?intake=${intakePublicId}`, `/payments?intake=${intakePublicId}`]);
+        expect(screen.getByTestId("payment-44444444-4444-4444-8444-444444444444")).toHaveTextContent("100.00");
+        expect(screen.getByTestId("payment-88888888-8888-4888-8888-888888888888")).toHaveTextContent("200.00");
     });
 });

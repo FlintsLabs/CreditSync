@@ -23,6 +23,13 @@ export interface PaymentWorkflowInput {
     bankReference?: string;
     notes?: string;
     originLoanPublicId?: string;
+    attachmentRequirement?: { expectedCount: number };
+}
+
+export interface PaymentCommandContext {
+    idempotencyKey: string;
+    requestId: string;
+    correlationId: string;
 }
 
 export interface PaymentWorkflowResult {
@@ -49,7 +56,7 @@ function requireUuid(value: string, field: string) {
     if (!uuidPattern.test(value)) throw new Error(`${field} must be a UUID`);
 }
 
-export async function createPaymentWorkflow(client: HttpClient, input: PaymentWorkflowInput) {
+export async function createPaymentWorkflow(client: HttpClient, input: PaymentWorkflowInput, context?: PaymentCommandContext) {
     return client.post<PaymentWorkflowResult>("/payment-intakes", {
         amount: normalizeMoney(input.amount),
         receivedAt: input.receivedAt,
@@ -57,7 +64,12 @@ export async function createPaymentWorkflow(client: HttpClient, input: PaymentWo
         bankReference: input.bankReference?.trim() || null,
         notes: input.notes?.trim() || null,
         originLoanPublicId: input.originLoanPublicId ?? null,
-    }).then((response) => response.data);
+        ...(input.attachmentRequirement ? { attachmentRequirement: input.attachmentRequirement } : {}),
+    }, context ? { headers: {
+        "Idempotency-Key": context.idempotencyKey,
+        "X-Request-Id": context.requestId,
+        "X-Correlation-Id": context.correlationId,
+    } } : undefined).then((response) => response.data);
 }
 
 export async function executeRenewal(

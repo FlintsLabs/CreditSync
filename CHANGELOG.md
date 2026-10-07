@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.70 - 2026-10-07
+
+### Added
+
+- Added review-first manual receipt entry across multiple contracts with exact Decimal allocation totals, optional shared evidence, Bangkok receipt time, resumable upload retry, and shared receipt links in each contract's payment history.
+
+### Changed
+
+- Clarified that a separate-transfer batch is for independent receipts, while multiple supporting files belong to one receipt; documented the workflow and review handoff.
+- Updated the authenticated UI footer to application version 0.4.70 for this release.
+
+### Fixed
+
+- Preserved the repayment shortcut and its owned UI fixes for amount blur formatting, select spacing, contextual hints, floating-loan schedule handling, and retained-draft Cancel disclosure; uploads keep tracing context and duplicate review targets cannot become retryable intakes.
+
 ## v0.4.69 - 2026-10-07
 
 ### Changed

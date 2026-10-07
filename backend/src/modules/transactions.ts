@@ -1,10 +1,10 @@
 import { Elysia } from "elysia";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, loans, transactions } from "../db/schema";
+import { borrowers, loans, paymentIntakes, transactions } from "../db/schema";
 import { resolveStoredFileUrl } from "../lib/storage";
 import { authPlugin } from "../middleware/auth";
-import { getAccessScopeCacheKey, transactionAccessFilters } from "../lib/access";
+import { canAccessTenantWideData, getAccessScopeCacheKey, transactionAccessFilters } from "../lib/access";
 import { withTenantCache } from "../lib/cache";
 import { DomainError, presentDomainError } from "../services/domain-error";
 import { paymentEvidenceSummariesByIntake } from "../services/payment-evidence-read-service";
@@ -30,6 +30,8 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
                     loanPublicId: loans.publicId,
                     scheduleId: transactions.scheduleId,
                     paymentIntakeId: transactions.paymentIntakeId,
+                    paymentIntakePublicId: paymentIntakes.publicId,
+                    accessiblePaymentIntakeId: paymentIntakes.id,
                     borrowerName: borrowers.name,
                     amount: transactions.amount,
                     principalComponent: transactions.principalComponent,
@@ -43,13 +45,18 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
                     .from(transactions)
                     .leftJoin(loans, eq(transactions.loanId, loans.id))
                     .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+                    .leftJoin(paymentIntakes, and(
+                        eq(paymentIntakes.id, transactions.paymentIntakeId),
+                        eq(paymentIntakes.tenantId, transactions.tenantId),
+                        ...(canAccessTenantWideData(user) ? [] : [eq(paymentIntakes.ownerUserId, user.id)]),
+                    ))
                     .where(and(...transactionAccessFilters(user)))
                     .orderBy(desc(transactions.transactionDate));
 
-                const evidenceByIntake = await paymentEvidenceSummariesByIntake(user.tenantId, [...new Set(rows.flatMap((row) => row.paymentIntakeId ? [row.paymentIntakeId] : []))]);
-                return await Promise.all(rows.map(async ({ paymentIntakeId, ...row }) => ({
+                const evidenceByIntake = await paymentEvidenceSummariesByIntake(user.tenantId, [...new Set(rows.flatMap((row) => row.accessiblePaymentIntakeId ? [row.accessiblePaymentIntakeId] : []))]);
+                return await Promise.all(rows.map(async ({ paymentIntakeId, accessiblePaymentIntakeId, ...row }) => ({
                     ...row,
-                    evidence: paymentIntakeId ? evidenceByIntake.get(paymentIntakeId) ?? [] : [],
+                    evidence: accessiblePaymentIntakeId ? evidenceByIntake.get(accessiblePaymentIntakeId) ?? [] : [],
                     slipRef: row.slipUrl,
                     slipUrl: await resolveStoredFileUrl(row.slipUrl),
                 })));

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { auditLogs, borrowers, loanSchedules, loans, paymentIntakes, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, files, loanSchedules, loans, paymentEvidence, paymentIntakes, transactions, users } from "../db/schema";
 import { paymentIntakesRoute } from "./payment-intakes";
 import { transactionsRoute } from "./transactions";
 
@@ -45,6 +45,80 @@ async function jsonRequest(app: { handle(request: Request): Response | Promise<R
 
 describe("payment intake REST adapter", () => {
     if (integrationEnabled) beforeEach(resetApplicationTables);
+
+    integrationTest("posts a 300.00 shared receipt to two contracts and returns each amount with the same ready evidence", async () => {
+        const actor = await db.insert(users).values({ tenantId: "tenant-shared-receipt", email: "shared-receipt@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Shared receipt borrower" }).returning().then((rows) => rows[0]!);
+        const loansCreated = await db.insert(loans).values([
+            { tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" },
+            { tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "200.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "200.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" },
+        ]).returning();
+        const schedules = await Promise.all(loansCreated.map((loan, index) => db.insert(loanSchedules).values({
+            tenantId: actor.tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-10",
+            scheduledPrincipal: index === 0 ? "100.00" : "200.00", scheduledInterest: "0.00", scheduledFee: "0.00",
+            scheduledTotal: index === 0 ? "100.00" : "200.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: index === 0 ? "100.00" : "200.00", status: "pending",
+        }).returning().then((rows) => rows[0]!)));
+        const token = await authToken(actor);
+        const intakeApp = new Elysia().use(paymentIntakesRoute);
+        const created = await jsonRequest(intakeApp, "/payment-intakes", token, {
+            method: "POST", headers: { "idempotency-key": "shared-receipt-create", "x-request-id": "shared-receipt-request", "x-correlation-id": "shared-receipt-correlation" },
+            body: JSON.stringify({ amount: "300.00", receivedAt: "2026-08-10T03:00:00.000Z", payerName: "Shared receipt borrower", attachmentRequirement: { expectedCount: 1 } }),
+        });
+        expect(created.response.status).toBe(200);
+        const storedFile = await db.insert(files).values({ tenantId: actor.tenantId, ownerUserId: actor.id, bucket: "test", key: "shared-receipt/synthetic.png", originalName: "synthetic.png", mimeType: "image/png", size: 8 }).returning().then((rows) => rows[0]!);
+        const evidence = await db.insert(paymentEvidence).values({ tenantId: actor.tenantId, paymentIntakeId: created.body.publicId ? (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, created.body.publicId) }))!.id : 0, fileId: storedFile.id, status: "ready", evidenceType: "slip", evidenceHash: "b".repeat(64), mimeType: "image/png", declaredSize: 8, createdByUserId: actor.id, finalizedAt: new Date() }).returning().then((rows) => rows[0]!);
+        const allocations = loansCreated.map((loan, index) => ({ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, schedulePublicId: schedules[index]!.publicId, amount: index === 0 ? "100.00" : "200.00" }));
+        const preview = await jsonRequest(intakeApp, `/payment-intakes/${created.body.publicId}/match-preview`, token, { method: "POST", body: JSON.stringify({ allocations }) });
+        expect(preview.body).toMatchObject({ status: "ready", totalAllocated: "300.00", allocations: expect.arrayContaining([
+            expect.objectContaining({ loanPublicId: loansCreated[0]!.publicId, amount: "100.00" }),
+            expect.objectContaining({ loanPublicId: loansCreated[1]!.publicId, amount: "200.00" }),
+        ]) });
+        const posted = await jsonRequest(intakeApp, `/payment-intakes/${created.body.publicId}/post`, token, { method: "POST", body: JSON.stringify({ proposalPublicId: preview.body.publicId }) });
+        expect(posted.body.status).toBe("posted");
+
+        const transactionApp = new Elysia().use(transactionsRoute);
+        const history = await jsonRequest(transactionApp, "/transactions", token);
+        const rows = history.body.filter((row: { paymentIntakePublicId: string | null }) => row.paymentIntakePublicId === created.body.publicId);
+        expect(rows).toHaveLength(2);
+        expect(rows.map((row: { amount: string }) => row.amount).sort()).toEqual(["100.00", "200.00"]);
+        expect(rows[0]!.evidence).toEqual(rows[1]!.evidence);
+        expect(rows[0]!.evidence).toEqual([expect.objectContaining({ publicId: evidence.publicId, filePublicId: storedFile.publicId })]);
+
+        const foreignActor = await db.insert(users).values({ tenantId: "tenant-shared-receipt-other", email: "shared-receipt-foreign@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const foreignHistory = await jsonRequest(transactionApp, "/transactions", await authToken(foreignActor));
+        expect(foreignHistory.body).toEqual([]);
+    });
+
+    // Break caught: transaction reads expose a receipt public ID through an intake outside the actor's owner scope.
+    integrationTest("returns only actor-accessible receipt public IDs from transaction history", async () => {
+        const [actor, peer] = await db.insert(users).values([
+            { tenantId: "tenant-a", email: "transaction-history-a@example.test", role: "collector" },
+            { tenantId: "tenant-a", email: "transaction-history-b@example.test", role: "collector" },
+        ]).returning();
+        const borrower = await db.insert(borrowers).values({ tenantId: "tenant-a", ownerUserId: actor!.id, name: "History Borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: "tenant-a", ownerUserId: actor!.id, borrowerId: borrower.id, principalAmount: "300.00", interestRate: "0.00", repaymentType: "monthly", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const [ownIntake, hiddenIntake] = await db.insert(paymentIntakes).values([
+            { tenantId: "tenant-a", ownerUserId: actor!.id, status: "posted", amount: "100.00", receivedAt: new Date() },
+            { tenantId: "tenant-a", ownerUserId: peer!.id, status: "posted", amount: "200.00", receivedAt: new Date() },
+        ]).returning();
+        const hiddenFile = await db.insert(files).values({ tenantId: "tenant-a", ownerUserId: peer!.id, bucket: "test", key: "foreign-ready-slip", originalName: "synthetic.png", mimeType: "image/png", size: 4 }).returning().then((rows) => rows[0]!);
+        const hiddenEvidence = await db.insert(paymentEvidence).values({ tenantId: "tenant-a", paymentIntakeId: hiddenIntake!.id, fileId: hiddenFile.id, status: "ready", evidenceType: "slip", evidenceHash: "a".repeat(64), mimeType: "image/png", declaredSize: 4, createdByUserId: peer!.id, finalizedAt: new Date() }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values([
+            { tenantId: "tenant-a", ownerUserId: actor!.id, loanId: loan.id, amount: "100.00", principalComponent: "100.00", type: "repayment", paymentIntakeId: ownIntake!.id },
+            { tenantId: "tenant-a", ownerUserId: actor!.id, loanId: loan.id, amount: "200.00", principalComponent: "200.00", type: "repayment", paymentIntakeId: hiddenIntake!.id },
+            { tenantId: "tenant-a", ownerUserId: actor!.id, loanId: loan.id, amount: "0.00", principalComponent: "0.00", type: "repayment", paymentIntakeId: null },
+        ]);
+        const token = await authToken(actor!);
+        const response = await jsonRequest(new Elysia().use(transactionsRoute), "/transactions", token);
+        expect(response.body).toEqual(expect.arrayContaining([
+            expect.objectContaining({ amount: "100.00", paymentIntakePublicId: ownIntake!.publicId }),
+            expect.objectContaining({ amount: "200.00", paymentIntakePublicId: null, evidence: [] }),
+            expect.objectContaining({ amount: "0.00", paymentIntakePublicId: null }),
+        ]));
+        expect(response.body.find((row: { amount: string }) => row.amount === "200.00").evidence).not.toContainEqual(expect.objectContaining({ publicId: hiddenEvidence.publicId }));
+    });
 
     // Break caught: REST implements its own matching/posting rules, drops command idempotency, or exposes numeric IDs/money.
     integrationTest("runs create/list/get/review/preview/post/reversal through the shared application service", async () => {
