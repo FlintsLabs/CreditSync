@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { authPlugin } from "../middleware/auth";
 import { loanContractRoutes } from "./loan-contract-routes";
+import { loanAccrualPaymentRoutes } from "./loan-accrual-payment-routes";
 import { loanDisbursementRoutes } from "./loan-disbursement-routes";
 import { loanFundingRoutes } from "./loan-funding-routes";
 import { loanInterestRateRoutes } from "./loan-interest-rate-routes";
@@ -23,6 +24,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .use(authPlugin)
     .use(loanContractRoutes)
+    .use(loanAccrualPaymentRoutes)
     .use(loanDisbursementRoutes)
     .use(loanFundingRoutes)
     .use(loanInterestRateRoutes)

@@ -1924,6 +1924,7 @@ export const paymentMatchAllocations = pgTable("payment_match_allocations", {
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
+    uniqueIndex("payment_match_allocations_tenant_id_loan_unique").on(table.tenantId, table.id, table.loanId),
     uniqueIndex("payment_match_allocations_tenant_proposal_order_unique")
         .on(table.tenantId, table.proposalId, table.allocationOrder),
     check("payment_match_allocations_status_check", sql`${table.status} IN ('proposed', 'posted', 'reversed')`),
@@ -1957,6 +1958,25 @@ export const paymentMatchAllocations = pgTable("payment_match_allocations", {
         columns: [table.tenantId, table.updatedByUserId],
         foreignColumns: [users.tenantId, users.id],
     }),
+]);
+
+// Selected daily-interest targets are immutable proposal metadata. Re-previewing
+// creates a new payment_match_allocations row and a new set of targets.
+export const paymentMatchFloatingTargets = pgTable("payment_match_floating_targets", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    allocationId: integer("allocation_id").notNull(),
+    loanId: integer("loan_id").notNull(),
+    accrualDate: date("accrual_date").notNull(),
+    amount: numeric("amount").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_match_floating_targets_tenant_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_match_floating_targets_allocation_date_unique").on(table.tenantId, table.allocationId, table.accrualDate),
+    index("payment_match_floating_targets_tenant_loan_date_idx").on(table.tenantId, table.loanId, table.accrualDate),
+    check("payment_match_floating_targets_amount_check", sql`${table.amount} > 0 AND scale(${table.amount}) <= 2 AND ${table.amount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)`),
+    foreignKey({ name: "payment_match_floating_targets_tenant_allocation_loan_fk", columns: [table.tenantId, table.allocationId, table.loanId], foreignColumns: [paymentMatchAllocations.tenantId, paymentMatchAllocations.id, paymentMatchAllocations.loanId] }),
 ]);
 
 export const paymentBatches = pgTable("payment_batches", {

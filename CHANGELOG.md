@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4.70 - 2026-10-07
+## v0.4.71 - 2026-10-07
 
 ### Added
 
@@ -8,18 +8,34 @@
 
 ### Changed
 
+- Integrated multi-contract receipt entry with the existing selected-date floating accrual payment workflow on main, retaining both features and their regression coverage.
 - Clarified that a separate-transfer batch is for independent receipts, while multiple supporting files belong to one receipt; documented the workflow and review handoff.
-- Updated the authenticated UI footer to application version 0.4.70 for this release.
+- Updated the authenticated UI footer to application version 0.4.71 for this release.
 
 ### Fixed
 
 - Keep receipt error recovery linked to the owned draft, protect unknown creation outcomes on exit, preserve full public-money precision in slip differences, and support keyboard focus, reduced motion, localized evidence selection, and accurate guidance for locally duplicated files.
 - Preserved the repayment shortcut and its owned UI fixes for amount blur formatting, select spacing, contextual hints, floating-loan schedule handling, and retained-draft Cancel disclosure; uploads keep tracing context and duplicate review targets cannot become retryable intakes.
 
+## v0.4.70 - 2026-10-07
+
+### Added
+
+- Added selected-date floating daily-interest payment previews and confirmed postings, with immutable target provenance, exact cached balance refresh, receipt/audit identifiers, safe retries, historical allocation checks, and per-accrual receipt history in Loan Detail.
+- Added a bilingual Accrual payment dialog that records actual Bangkok receipt time separately from selected accrual dates and preserves draft/post idempotency through retries.
+
+### Fixed
+
+- Repaired the pre-existing duplicate Drizzle snapshot UUID/parent chain in snapshots 0057/0058 so generated migration metadata can advance consistently; schema tables were unchanged by that metadata repair.
+- Preserved full 29-digit THB precision in floating allocation integrity checks, including partially paid accruals with a remaining satang value.
+- Kept selected-payment command identity through uncertain authorization failures and allowed an authenticated stale proposal to return safely to a fresh preview of the same intake; translated the future-receipt and accrual-after-receipt blockers.
+- Corrected the earlier hypothetical legacy-baseline test fixture: migration 0030 cutover and the deferred paid-cache trigger require matching allocation lineage, so the unsupported cache-only state was not a production defect. Current-capacity checks use real receipts and valid allocation provenance.
+
 ## v0.4.69 - 2026-10-07
 
 ### Changed
 
+- Recorded the approved specification and implementation plan for selected-date floating daily interest payments with independent actual receipt timestamps and visible per-accrual receipt history.
 - Added the reviewed design for a production Bruno CLI collection covering borrower/loan inspection, floating daily-loan origination, and stepwise payment evidence and posting.
 - Integrated the six main-branch history commits while retaining the verified 147-tool discovery release, schedule-deferral workflow, and backend Docker context protections.
 - Synchronized the authenticated UI release footer with application `0.4.69`, MCP schema `1.0`, and the actual CreditSync plugin `12.0.0` manifest; point its changelog link at this release branch until it is integrated.
@@ -27,6 +43,7 @@
 
 ### Fixed
 
+- Show all floating-loan accrual days through the current Bangkok business date in Loan Detail using read-only backend projections, retain persisted reversal/prepayment history, and count daily advance interest only once in payment health.
 - Added a regression check that derives the displayed application version from the newest changelog heading and the plugin version from its manifest.
 
 ## v0.4.68 - 2026-10-07

@@ -367,18 +367,19 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
     .get("/:id", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         const scopeKey = getAccessScopeCacheKey(user);
+        const asOf = new Date();
         try {
             return await withTenantCache({
                 tenantId: user.tenantId,
                 namespace: "loans",
-                key: `detail:${params.id}:${scopeKey}`,
+                key: `detail:${params.id}:${scopeKey}:${bangkokBusinessDate(asOf)}`,
                 ttlSeconds: 30,
                 loader: async () => {
                     const ctx = loanCommandContext(user, request);
                     const accessibleLoan = await findAccessibleLoanByPublicId(user, params.id);
                     if (!accessibleLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
                     const [loan, commissionParticipants, paymentRows] = await Promise.all([
-                        getLoanApplication(ctx, params.id),
+                        getLoanApplication(ctx, params.id, { projectedAccrualsAsOf: asOf }),
                         listLoanCommissionParticipants(ctx, params.id),
                         db.select({ publicId: transactions.publicId }).from(transactions).where(and(
                             eq(transactions.tenantId, user.tenantId), eq(transactions.loanId, accessibleLoan.id),
@@ -396,7 +397,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     const commissionSummary = paymentRows.length > 0
                         ? await previewLoanCommission(ctx, { loanPublicId: params.id, paymentPublicIds: paymentRows.map((row) => row.publicId) })
                         : { loanPublicId: params.id, paymentPublicIds: [], interestAmount: "0.00", totalCommission: "0.00", participants: [] };
-                    const paymentHealth = await getLoanReadPaymentHealth(db, accessibleLoan, { asOf: new Date(), context: ctx });
+                    const paymentHealth = await getLoanReadPaymentHealth(db, accessibleLoan, { asOf, context: ctx });
                     return { ...loan, paymentHealth, commissionParticipantCount: commissionParticipants.length, commissionParticipants, commissionSummary };
                 },
             });
