@@ -541,6 +541,12 @@ export interface LoanApplicationReadOptions {
 export async function getLoanApplication(ctx: CommandContext, publicId: string, options: LoanApplicationReadOptions = {}) {
     const loan = await accessibleLoan(ctx, publicId);
     const base = await presentLoan(loan);
+    // The Web action gate needs the same stored terms that posting validates.
+    // Keep these fields out of the frozen MCP contract read.
+    const webAccrualTerms = options.projectedAccrualsAsOf ? {
+        floatingAccrualCycle: loan.floatingAccrualCycle,
+        interestPeriodUnit: loan.interestPeriodUnit,
+    } : {};
     const [inbound, outbound, replacementLineages] = await Promise.all([
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.newLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.oldLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
@@ -590,7 +596,7 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string, 
         accruals = accruals.map((row) => ({ ...row, receiptHistory: historyByDate.get(row.accrualDate) ?? [] }));
     }
     const replacementLineage = replacementLineages.get(loan.id) ?? null;
-    if (!inbound && !outbound) return { ...base, replacementLineage, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [], accruals };
+    if (!inbound && !outbound) return { ...base, ...webAccrualTerms, replacementLineage, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [], accruals };
     const [inboundOldLoan, outboundNewLoan, opening, waivers] = await Promise.all([
         inbound ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, inbound.oldLoanId)) }) : null,
         outbound?.newLoanId ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, outbound.newLoanId)) }) : null,
@@ -603,6 +609,7 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string, 
     const primary = outbound ?? inbound!;
     return {
         ...base,
+        ...webAccrualTerms,
         replacementLineage,
         restructureLineage: {
             restructurePublicId: primary.publicId,

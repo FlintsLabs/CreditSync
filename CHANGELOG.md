@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.72 - 2026-10-08
+
+### Added
+
+- Added role-filtered mobile bottom navigation with bilingual landmark labels, nested-route current states, keyboard focus, and shared safe-area clearance across content, footer, drawer, and AI assistant. The AI chat fits short mobile viewports and the footer reserves space beside the floating assistant.
+
+### Changed
+
+- Kept remaining destinations in the existing mobile drawer and aligned the authenticated UI version with this release.
+
 ## v0.4.71 - 2026-10-07
 
 ### Added
@@ -14,6 +24,7 @@
 
 ### Fixed
 
+- Restored the Accrual table payment action by returning the stored floating accrual cycle and interest period in Web loan details, matching posting eligibility while preserving the frozen MCP loan shape.
 - Keep receipt error recovery linked to the owned draft, protect unknown creation outcomes on exit, preserve full public-money precision in slip differences, and support keyboard focus, reduced motion, localized evidence selection, and accurate guidance for locally duplicated files.
 - Preserved the repayment shortcut and its owned UI fixes for amount blur formatting, select spacing, contextual hints, floating-loan schedule handling, and retained-draft Cancel disclosure; uploads keep tracing context and duplicate review targets cannot become retryable intakes.
 

@@ -33,6 +33,9 @@ export default function DashboardLayout() {
         label: t(isSidebarCollapsed ? "nav.expandSidebar" : "nav.collapseSidebar"),
     };
 
+    const isCurrentRoute = (href: string) =>
+        location.pathname === href || location.pathname.startsWith(`${href}/`);
+
     const navigation = [
         ...(isTenantAdmin ? [{ name: t("nav.dashboard", "Dashboard"), href: "/dashboard", icon: LayoutDashboard }] : []),
         { name: t("dashboard.borrowers", "Borrowers"), href: "/borrowers", icon: Users },
@@ -60,11 +63,11 @@ export default function DashboardLayout() {
             >
                 <AppBar compact={isSidebarCollapsed} sidebarToggle={sidebarToggle} />
 
-                <div className="flex flex-1 flex-col gap-1 p-4">
+                <nav aria-label={t("nav.sidebarNavigation")} className="flex flex-1 flex-col gap-1 p-4">
                     <TooltipProvider>
                         {navigation.map((item) => {
                             const Icon = item.icon;
-                            const isActive = location.pathname === item.href || (item.href === "/intermediaries" && location.pathname.startsWith("/intermediaries/"));
+                            const isActive = isCurrentRoute(item.href);
                             const link = (
                                 <Link
                                     key={item.href}
@@ -72,7 +75,7 @@ export default function DashboardLayout() {
                                     aria-label={item.name}
                                     aria-current={isActive ? "page" : undefined}
                                     className={cn(
-                                        "flex items-center gap-2 rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                                        "flex items-center gap-2 rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                                         isSidebarCollapsed ? "size-10 justify-center p-0 mx-auto" : "px-3 py-2",
                                         isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground",
                                     )}
@@ -94,7 +97,7 @@ export default function DashboardLayout() {
                             );
                         })}
                     </TooltipProvider>
-                </div>
+                </nav>
 
                 <div data-testid="sidebar-account-footer" className="mt-auto border-t p-4">
                     <div className={cn("flex items-center", isSidebarCollapsed ? "justify-center" : "justify-start")}>
@@ -124,31 +127,33 @@ export default function DashboardLayout() {
 
                 {/* Mobile Sidebar Overlay (Slide-in) */}
                 {isMobileMenuOpen && (
-                    <div className="fixed inset-0 z-40 flex md:hidden">
+                    <div className="fixed inset-0 z-[110] flex md:hidden">
                         {/* Backdrop */}
                         <div
-                            className="fixed inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
+                            className="fixed inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 motion-reduce:animate-none"
                             onClick={() => setIsMobileMenuOpen(false)}
                         />
 
                         {/* Sidebar Panel */}
-                        <div data-testid="mobile-sidebar" className="relative flex w-[80%] max-w-xs flex-col bg-card shadow-2xl animate-in slide-in-from-left duration-300">
+                        <div data-testid="mobile-sidebar" className="relative flex w-[80%] max-w-xs flex-col bg-card shadow-2xl animate-in slide-in-from-left duration-300 motion-reduce:animate-none">
                             <div className="p-4 border-b">
                                 <AppBar />
                             </div>
 
                             <div className="flex-1 overflow-y-auto p-4">
-                                <nav className="flex flex-col gap-1">
+                                <nav aria-label={t("nav.drawerNavigation")} className="flex flex-col gap-1">
                                     {navigation.map((item) => {
                                         const Icon = item.icon;
-                                        const isActive = location.pathname === item.href || (item.href === "/intermediaries" && location.pathname.startsWith("/intermediaries/"));
+                                        const isActive = isCurrentRoute(item.href);
                                         return (
                                             <Link
                                                 key={item.href}
                                                 to={item.href}
                                                 onClick={() => setIsMobileMenuOpen(false)}
+                                                aria-label={item.name}
+                                                aria-current={isActive ? "page" : undefined}
                                                 className={cn(
-                                                    "flex items-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                                                    "flex items-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                                                     isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground"
                                                 )}
                                             >
@@ -160,18 +165,18 @@ export default function DashboardLayout() {
                                 </nav>
                             </div>
 
-                            <div data-testid="sidebar-account-footer" className="border-t p-4">
-                                <UserAccountMenu dropdownAlign="start" />
+                            <div data-testid="sidebar-account-footer" className="border-t p-4 pb-[calc(1rem+var(--safe-area-bottom))]">
+                                <UserAccountMenu dropdownAlign="start" dropdownClassName="z-[120]" />
                             </div>
                         </div>
                     </div>
                 )}
 
                 {/* Page Content */}
-                <main className="min-w-0 flex-1 overflow-x-hidden p-4 md:p-8">
+                <main className="min-w-0 flex-1 overflow-x-hidden p-4 pb-[calc(6rem+var(--safe-area-bottom))] md:p-8 md:pb-8">
                     <Outlet />
                 </main>
-                <footer data-testid="application-footer" className="border-t px-4 py-4 text-xs text-muted-foreground md:px-8">
+                <footer data-testid="application-footer" className="border-t px-4 pr-20 py-4 pb-[calc(6rem+var(--safe-area-bottom))] text-xs text-muted-foreground md:px-8 md:pr-24 md:pb-4">
                     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                         <a
                             className="font-medium text-foreground underline-offset-4 hover:underline"
@@ -194,6 +199,34 @@ export default function DashboardLayout() {
                     </div>
                 </footer>
             </div>
+
+            {/* Mobile Bottom Navigation */}
+            <nav aria-label={t("nav.mainNavigation")} data-testid="mobile-primary-navigation" className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-around border-t bg-background/95 pt-2 pb-[calc(0.5rem+var(--safe-area-bottom))] backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
+                {navigation.slice(0, 5).map((item) => {
+                    const Icon = item.icon;
+                    const isActive = isCurrentRoute(item.href);
+                    const mobileLabel = item.href === "/payments"
+                        ? t("nav.paymentsShort")
+                        : item.href === "/transactions"
+                            ? t("nav.transactionsShort")
+                            : item.name;
+                    return (
+                        <Link
+                            key={item.href}
+                            to={item.href}
+                            aria-label={item.name}
+                            aria-current={isActive ? "page" : undefined}
+                            className={cn(
+                                "flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-1 py-2 text-xs font-medium transition-colors hover:text-primary focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                isActive ? "text-primary" : "text-muted-foreground"
+                            )}
+                        >
+                            <Icon aria-hidden="true" className="h-5 w-5 shrink-0" />
+                            <span className="w-full truncate text-center text-[10px] leading-4">{mobileLabel}</span>
+                        </Link>
+                    );
+                })}
+            </nav>
 
             <AIAssistant />
         </div>

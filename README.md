@@ -8,6 +8,8 @@ Borrower list cards mask Thai national IDs by default. The card's copy action in
 
 CreditSync is a mobile-first loan management system for lenders who need to track funding sources, borrower profiles, loan contracts, repayments, and closing balances in one place.
 
+On narrow screens, authenticated users get a role-filtered five-destination bottom navigation; the existing drawer keeps the other permitted destinations available. The page, footer, drawer, and AI assistant account for device bottom safe areas. The chat fits short mobile viewports, and the footer leaves room beside the floating assistant. Navigation labels are available in Thai and English.
+
 The authenticated UI release footer displays the application, MCP schema, and private plugin versions, with a changelog link to the active `codex/mcp-tool-discovery` release branch until integration.
 
 MCP clients can use the read-only `tool.catalog.search` capability when unsure which tool fits a request. It searches tool guidance metadata only, shows executable candidates from the active profile, and reports when another profile is needed; it does not read borrower records or run a matched tool. Reconnect to the relevant profile explicitly when a search reports `connection_required`.
