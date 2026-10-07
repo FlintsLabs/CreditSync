@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Restored the Accrual table payment action by returning the stored floating accrual cycle and interest period in Web loan details, matching posting eligibility while preserving the frozen MCP loan shape.
 - Keep receipt error recovery linked to the owned draft, protect unknown creation outcomes on exit, preserve full public-money precision in slip differences, and support keyboard focus, reduced motion, localized evidence selection, and accurate guidance for locally duplicated files.
 - Preserved the repayment shortcut and its owned UI fixes for amount blur formatting, select spacing, contextual hints, floating-loan schedule handling, and retained-draft Cancel disclosure; uploads keep tracing context and duplicate review targets cannot become retryable intakes.
 
