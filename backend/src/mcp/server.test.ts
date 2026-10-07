@@ -88,15 +88,19 @@ async function startServer(input: {
     runtimeConfig?: McpRuntimeConfig;
     logs?: Array<Record<string, unknown>>;
     auditPublicIds?: string[];
+    onFindAudit?: () => void;
     persistDiagnostic?: CreateMcpHttpPluginInput["persistDiagnostic"];
     parseToolInput?: CreateMcpHttpPluginInput["parseToolInput"];
     logger?: (entry: Record<string, unknown>) => void;
     onMetric?: CreateMcpHttpPluginInput["onMetric"];
     consumeRateLimit?: CreateMcpHttpPluginInput["consumeRateLimit"];
     resolvePrincipal?: CreateMcpHttpPluginInput["resolvePrincipal"];
+    profile?: CreateMcpHttpPluginInput["profile"];
+    endpoint?: string;
 }) {
     const pluginInput: CreateMcpHttpPluginInput = {
         config: input.runtimeConfig ?? config(),
+        profile: input.profile,
         handlers: handlers(input.toolHandlers ?? {}),
         preflightHandlers: input.preflightHandlers,
         resolvePrincipal: input.resolvePrincipal ?? (async ({ tenantId, actorEmail }) => {
@@ -105,13 +109,13 @@ async function startServer(input: {
             return { tenantId, actorUserId: 7 };
         }),
         consumeRateLimit: input.consumeRateLimit ?? (async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 })),
-        findAuditPublicIds: async () => input.auditPublicIds ?? [AUDIT_ID],
+        findAuditPublicIds: async () => { input.onFindAudit?.(); return input.auditPublicIds ?? [AUDIT_ID]; },
         logger: input.logger ?? ((entry) => input.logs?.push(entry)),
         onMetric: input.onMetric,
         persistDiagnostic: input.persistDiagnostic,
         parseToolInput: input.parseToolInput,
     };
-    const app = new Elysia().use(createMcpHttpPlugin(pluginInput)).listen({ hostname: "127.0.0.1", port: 0 });
+    const app = new Elysia().use(createMcpHttpPlugin(pluginInput, input.endpoint)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
     return `http://127.0.0.1:${app.server!.port}`;
 }
@@ -125,6 +129,66 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
+    test("advertises schedule deferral as a strict confirmed financial command", async () => {
+        const metadata = advertisedMcpToolMetadata().find((tool) => tool.name === "loan.schedule.defer");
+        expect(metadata).toBeDefined();
+        expect(metadata!.inputSchema).toMatchObject({ additionalProperties: false, required: expect.arrayContaining(["loanPublicId", "schedulePublicId", "reason", "idempotencyKey", "confirmed"]) });
+        expect((metadata!.inputSchema.properties as Record<string, any>).confirmed).toMatchObject({ const: true });
+        expect(metadata!.outputSchema).toMatchObject({ additionalProperties: false });
+        expect(metadata!.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+        expect(metadata!.policy).toEqual({ kind: "financial", requiresAudit: true });
+
+        let calls = 0;
+        const baseUrl = await startServer({ toolHandlers: { "loan.schedule.defer": async () => { calls += 1; return {}; } } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        for (const args of [
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", idempotencyKey: "key" },
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", idempotencyKey: "key", confirmed: false },
+            { loanPublicId: BORROWER_ID, schedulePublicId: INTAKE_ID, reason: "test", idempotencyKey: "key", confirmed: true, extra: true },
+        ]) expect((await client.callTool({ name: "loan.schedule.defer", arguments: args })).isError).toBe(true);
+        expect(calls).toBe(0);
+        await client.close();
+    });
+
+    test("legacy MCP tool catalog search returns metadata without audit fields and rejects spoofed context", async () => {
+        let calls = 0;
+        let auditLookups = 0;
+        const baseUrl = await startServer({ toolHandlers: {
+            "tool.catalog.search": async (_ctx, input) => {
+                calls += 1;
+                return { profile: input.__profile, catalogVersion: input.__catalogVersion, guidanceVersion: "test-guidance", status: "matches", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };
+            },
+        }, onFindAudit: () => { auditLookups += 1; } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const result = await client.callTool({ name: "tool.catalog.search", arguments: { query: "ค้นหาผู้กู้" } });
+        expect(result.isError).not.toBe(true);
+        expect((result.structuredContent as any).data).toMatchObject({ profile: "full", status: "matches" });
+        expect((result.structuredContent as any)).not.toHaveProperty("auditPublicIds");
+        expect((result.content as Array<{ text?: string }>)[0]?.text).toContain("Capability search status: matches");
+        for (const key of ["tenantId", "actor", "profile", "__profile", "operation"]) {
+            const spoofed = await client.callTool({ name: "tool.catalog.search", arguments: { query: "borrower", [key]: key === "operation" ? "payment.post" : "spoof" } as any });
+            expect(spoofed.isError).toBe(true);
+        }
+        expect(calls).toBe(1);
+        expect(auditLookups).toBe(0);
+        await client.close();
+    });
+
+    test("discovery profile catalog search output accepts the serving profile and connection profile", async () => {
+        const baseUrl = await startServer({ profile: "discovery", endpoint: "/mcp/discovery", toolHandlers: {
+            "tool.catalog.search": async (_ctx, input) => ({ profile: input.__profile, catalogVersion: input.__catalogVersion, guidanceVersion: input.__guidanceVersion, status: "connection_required", matches: [], hasMore: false, nextCursor: null, requiredProfiles: ["loans"] }),
+        } });
+        const client = new Client({ name: "creditsync-discovery-contract-test", version: "1.0.0" });
+        const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/discovery`), { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } });
+        await client.connect(transport);
+        const result = await client.callTool({ name: "tool.catalog.search", arguments: { query: "defer installment" } });
+        expect(result.isError).not.toBe(true);
+        expect((result.structuredContent as any).data).toMatchObject({ profile: "discovery", status: "connection_required", requiredProfiles: ["loans"] });
+        await client.close();
+    });
+
     test("real MCP transport validates malformed tool arguments before handler invocation", async () => {
         let handlerCalls = 0;
         const baseUrl = await startServer({ toolHandlers: {
@@ -521,9 +585,9 @@ describe("CreditSync stateless MCP contract", () => {
             openWorldHint: false,
         });
         expect(listed.tools.find((tool) => tool.name === "loan.cancel.preview")?.annotations).toMatchObject({
-            readOnlyHint: true,
+            readOnlyHint: false,
             destructiveHint: false,
-            idempotentHint: true,
+            idempotentHint: false,
             openWorldHint: false,
         });
         expect(listed.tools.find((tool) => tool.name === "loan.cancel.execute")?.annotations).toMatchObject({
@@ -972,6 +1036,8 @@ describe("CreditSync stateless MCP contract", () => {
         expect(transport.sessionId).toBeUndefined();
         const listed = await client.listTools();
         expect(listed.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
+        const expectedDescriptions = new Map<string, string>(advertisedMcpToolMetadata().map((tool) => [tool.name, tool.description]));
+        for (const tool of listed.tools) expect(tool.description).toBe(expectedDescriptions.get(tool.name));
         expect(listed.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
         expect(listed.tools.every((tool) => {
             const properties = tool.inputSchema.properties as Record<string, unknown> | undefined;
@@ -1011,6 +1077,13 @@ describe("CreditSync stateless MCP contract", () => {
             "evidence.prepare",
             "evidence.finalize",
             "payment.cancel",
+            "payment.replacement.create",
+            "payment.replacement.duplicate-review.preview",
+            "payment.replacement.duplicate-review.execute",
+            "payment.identity-decision.preview",
+            "payment.identity-decision.execute",
+            "payment.evidence-recovery.preview",
+            "payment.evidence-recovery.execute",
             "evidence.import-chatgpt-file",
             "loan.disbursement.evidence.import-chatgpt-file",
             "payment.evidence-supplement.import-chatgpt-file",
@@ -1047,10 +1120,12 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.restore.evidence.finalize",
             "payment.restore.preview",
             "payment.restore.execute",
+            "payment.restore.cancel",
             "payment.restore.schedule-backfill",
             "loan.draft.delete",
             "loan.activate",
             "loan.payment-start-date.update",
+            "loan.schedule.defer",
             "loan.interest-rate.execute",
             "loan.settlement.execute",
             "loan.settlement.reverse",
@@ -1071,6 +1146,7 @@ describe("CreditSync stateless MCP contract", () => {
             "intermediary.disbursement.evidence.finalize",
             "intermediary.disbursement.post",
             "intermediary.disbursement.reverse",
+            "intermediary.collection.cancel",
             "intermediary.remittance.post",
             "renewal.preview",
             "renewal.execute",

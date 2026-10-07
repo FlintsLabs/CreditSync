@@ -58,11 +58,11 @@ export function AIAssistant() {
     };
 
     return (
-        <div className="fixed bottom-24 md:bottom-8 right-4 md:right-8 z-[100] flex flex-col items-end">
+        <div data-testid="ai-assistant-root" className="fixed bottom-[calc(6rem+var(--safe-area-bottom))] md:bottom-8 right-4 md:right-8 z-[100] flex flex-col items-end">
             {/* Chat Window */}
             {isOpen && (
-                <Card className="w-[320px] md:w-[380px] h-[450px] mb-4 shadow-2xl flex flex-col animate-in slide-in-from-bottom-5 duration-300">
-                    <CardHeader className="p-4 border-b flex flex-row items-center justify-between space-y-0">
+                <Card style={{ maxHeight: "calc(100dvh - 11rem - var(--safe-area-bottom))" }} className="w-[min(380px,calc(100vw-2rem))] md:w-[380px] h-[450px] mb-4 shadow-2xl flex min-h-0 flex-col animate-in slide-in-from-bottom-5 duration-300 transition-none motion-reduce:duration-0 motion-reduce:animate-none">
+                    <CardHeader className="shrink-0 p-4 border-b flex flex-row items-center justify-between space-y-0">
                         <div className="flex items-center gap-2">
                             <Bot className="h-5 w-5 text-primary" />
                             <CardTitle className="text-base font-semibold">AI Assistant</CardTitle>
@@ -72,7 +72,7 @@ export function AIAssistant() {
                         </Button>
                     </CardHeader>
 
-                    <CardContent className="flex-1 p-4 overflow-y-auto space-y-4" ref={scrollRef}>
+                    <CardContent className="min-h-0 flex-1 p-4 overflow-y-auto space-y-4" ref={scrollRef}>
                         {messages.map((msg) => (
                             <div
                                 key={msg.id}
@@ -94,7 +94,7 @@ export function AIAssistant() {
                         )}
                     </CardContent>
 
-                    <CardFooter className="p-4 border-t">
+                    <CardFooter className="shrink-0 p-4 border-t">
                         <form
                             className="flex w-full items-center gap-2"
                             onSubmit={(e) => {

@@ -17,6 +17,7 @@ import { createAuditLog } from "../lib/audit-log";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { evaluateFinancialEvidence } from "./financial-evidence-policy";
+import { effectivePaymentEvidence } from "./payment-effective-evidence-service";
 
 export type FinancialEvidenceTarget =
     | { kind: "payment_intake"; publicId: string }
@@ -168,6 +169,35 @@ async function seedLegacyDisbursementEvidenceAttempts(tx: DbExecutor, ctx: Comma
             createdByUserId: ctx.actorUserId, source: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId,
         }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
     }
+}
+
+/** Count immutable evidence-attempt identities, collapsing hash/fingerprint aliases. */
+export async function countAuthoritativeEvidenceAttempts(
+    tx: DbExecutor,
+    tenantId: string,
+    requirementId: number,
+    target: { kind: "payment"; paymentIntakeId: number } | { kind: "disbursement"; eventId: number },
+) {
+    const attempts = await tx.select({ attemptKey: financialEvidenceRequirementAttempts.attemptKey, sourceFileFingerprint: financialEvidenceRequirementAttempts.sourceFileFingerprint })
+        .from(financialEvidenceRequirementAttempts)
+        .where(and(eq(financialEvidenceRequirementAttempts.tenantId, tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId)));
+    const aliases = new Map<string, string>();
+    if (target.kind === "payment") {
+        const evidence = await tx.select({ evidenceHash: paymentEvidence.evidenceHash, sourceFileFingerprint: paymentEvidence.sourceFileFingerprint })
+            .from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, target.paymentIntakeId)));
+        for (const row of evidence) if (row.evidenceHash && row.sourceFileFingerprint) aliases.set(`sha256:${row.evidenceHash.toLowerCase()}`, `fingerprint:${row.sourceFileFingerprint.trim().toLowerCase()}`);
+    } else {
+        const evidence = await tx.select({ evidenceHash: loanDisbursementEvidenceIntents.evidenceHash, sourceFileFingerprint: loanDisbursementEvidenceIntents.sourceFileFingerprint })
+            .from(loanDisbursementEvidenceIntents).where(and(eq(loanDisbursementEvidenceIntents.tenantId, tenantId), eq(loanDisbursementEvidenceIntents.loanDisbursementEventId, target.eventId)));
+        for (const row of evidence) if (row.evidenceHash && row.sourceFileFingerprint) aliases.set(`sha256:${row.evidenceHash.toLowerCase()}`, `fingerprint:${row.sourceFileFingerprint.trim().toLowerCase()}`);
+    }
+    const identities = new Set<string>();
+    for (const attempt of attempts) {
+        const fingerprint = attempt.sourceFileFingerprint?.trim().toLowerCase();
+        const key = fingerprint ? `fingerprint:${fingerprint}` : attempt.attemptKey.trim().toLowerCase();
+        identities.add(aliases.get(key) ?? key.replace(/^chatgpt:/u, "fingerprint:"));
+    }
+    return identities.size;
 }
 
 async function hasChatGptAliasForPaymentHash(tx: DbExecutor, ctx: CommandContext, requirementId: number, intakeId: number, attemptKey: string) {
@@ -336,11 +366,8 @@ export async function registerFinancialEvidenceRequirement(
         if (attemptKey && !(await hasChatGptAliasForPaymentHash(tx, ctx, row.id, intake.id, attemptKey))) {
             await ensureAttempt(tx, ctx, row.id, attemptKey, binding, "payment");
         }
-        const attempts = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
-            eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
-            eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, row.id),
-        ));
-        const nextCount = Math.max(expectedCount, row.expectedCount, attempts.length);
+        const attemptCount = await countAuthoritativeEvidenceAttempts(tx, ctx.tenantId, row.id, { kind: "payment", paymentIntakeId: intake.id });
+        const nextCount = Math.max(expectedCount, row.expectedCount, attemptCount);
         if (nextCount > row.expectedCount) {
             row = await tx.update(financialEvidenceRequirements).set({ expectedCount: nextCount, updatedAt: new Date() }).where(eq(financialEvidenceRequirements.id, row.id)).returning().then((rows) => rows[0]!);
         }
@@ -363,11 +390,8 @@ export async function registerFinancialEvidenceRequirement(
     if (attemptKey && !(await hasChatGptAliasForDisbursementHash(tx, ctx, row.id, event.id, attemptKey))) {
         await ensureAttempt(tx, ctx, row.id, attemptKey, binding, "disbursement");
     }
-    const attempts = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
-        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
-        eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, row.id),
-    ));
-    const nextCount = Math.max(expectedCount, row.expectedCount, attempts.length);
+    const attemptCount = await countAuthoritativeEvidenceAttempts(tx, ctx.tenantId, row.id, { kind: "disbursement", eventId: event.id });
+    const nextCount = Math.max(expectedCount, row.expectedCount, attemptCount);
     if (nextCount > row.expectedCount) {
         row = await tx.update(financialEvidenceRequirements).set({ expectedCount: nextCount, updatedAt: new Date() }).where(eq(financialEvidenceRequirements.id, row.id)).returning().then((rows) => rows[0]!);
     }
@@ -379,15 +403,15 @@ export async function registerFinancialEvidenceRequirement(
 
 async function paymentDecision(tx: DbExecutor, ctx: CommandContext, intake: typeof paymentIntakes.$inferSelect) {
     const requirement = await tx.query.financialEvidenceRequirements.findFirst({ where: and(eq(financialEvidenceRequirements.tenantId, ctx.tenantId), eq(financialEvidenceRequirements.paymentIntakeId, intake.id)) });
-    const evidence = await tx.select({ status: paymentEvidence.status, finalizedAt: paymentEvidence.finalizedAt, fileId: paymentEvidence.fileId, fileRecordId: files.id }).from(paymentEvidence)
-        .leftJoin(files, and(eq(files.tenantId, ctx.tenantId), eq(files.id, paymentEvidence.fileId)))
-        .where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intake.id)));
-    const attempts = requirement ? await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
-        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement.id),
-    )) : [];
+    const effective = (await effectivePaymentEvidence(ctx.tenantId, [intake.id], tx)).get(intake.id) ?? [];
+    const fileIds = effective.flatMap((row) => row.fileId === null ? [] : [row.fileId]);
+    const fileRows = fileIds.length ? await tx.select({ id: files.id }).from(files).where(and(eq(files.tenantId, ctx.tenantId), inArray(files.id, fileIds))) : [];
+    const fileIdsSet = new Set(fileRows.map((row) => row.id));
+    const evidence = effective.map((row) => ({ status: row.status, finalizedAt: row.finalizedAt, fileId: row.fileId, fileRecordId: row.fileId !== null && fileIdsSet.has(row.fileId) ? row.fileId : null }));
+    const attemptCount = requirement ? await countAuthoritativeEvidenceAttempts(tx, ctx.tenantId, requirement.id, { kind: "payment", paymentIntakeId: intake.id }) : 0;
     const state = evaluateFinancialEvidence({
         required: intake.evidenceRequired || Boolean(requirement) || evidence.length > 0,
-        expectedCount: Math.max(requirement?.expectedCount ?? 0, evidence.length, attempts.length),
+        expectedCount: Math.max(requirement?.expectedCount ?? 0, evidence.length, attemptCount),
         readyCount: evidence.filter((row) => row.status === "ready" && row.finalizedAt !== null && row.fileId !== null && row.fileRecordId !== null).length,
         pendingCount: evidence.filter((row) => row.status === "pending").length,
         rejectedCount: evidence.filter((row) => row.status === "rejected").length,
@@ -405,12 +429,10 @@ async function disbursementDecision(tx: DbExecutor, ctx: CommandContext, event: 
             eq(loanDisbursementEvidence.fileId, loanDisbursementEvidenceIntents.fileId),
         ))
         .where(and(eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.loanDisbursementEventId, event.id)));
-    const attempts = requirement ? await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
-        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement.id),
-    )) : [];
+    const attemptCount = requirement ? await countAuthoritativeEvidenceAttempts(tx, ctx.tenantId, requirement.id, { kind: "disbursement", eventId: event.id }) : 0;
     const state = evaluateFinancialEvidence({
         required: Boolean(requirement) || intents.length > 0,
-        expectedCount: Math.max(requirement?.expectedCount ?? 0, intents.length, attempts.length),
+        expectedCount: Math.max(requirement?.expectedCount ?? 0, intents.length, attemptCount),
         readyCount: intents.filter((row) => row.status === "ready" && row.finalizedAt !== null && row.fileId !== null && row.fileRecordId !== null && row.associationId !== null).length,
         pendingCount: intents.filter((row) => row.status === "pending").length,
         rejectedCount: 0,

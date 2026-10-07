@@ -1,5 +1,8 @@
 import { MCP_TOOL_NAMES, type ToolProfile } from "./catalog-types";
 import { toolIsVisibleInProfile, workflowRule, WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION, WORKFLOW_TOOL_INVENTORY, type WorkflowIntent } from "./workflow-registry";
+import type { PaymentWorkflowBlocker } from "../services/payment-workflow-blockers";
+import { TOOL_GUIDANCE, TOOL_GUIDANCE_VERSION, type ToolGuidance } from "./tool-guidance";
+import type { McpToolDefinition } from "./catalog-types";
 
 const publicIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type WorkflowTargetKind = "borrower" | "loan" | "payment_intake" | "loan_disbursement";
@@ -12,13 +15,15 @@ export type ResolverInput = Readonly<{
     expectedAttachmentCount?: number;
     knownWorkflowVersion?: string;
     knownCatalogVersion?: string;
+    knownGuidanceVersion?: string;
     toolName?: string;
+    schedulePublicId?: string;
 }>;
 
 export type ResolverObservation = Readonly<{
     targetAvailable?: boolean;
     identityResolved?: boolean;
-    state?: "unresolved" | "mutable" | "posted";
+    state?: "unresolved" | "mutable" | "posted" | "cancelled" | "duplicate" | "reversed";
     loanType?: "scheduled" | "floating";
     evidenceRequired?: boolean;
     evidenceReady?: boolean;
@@ -27,11 +32,21 @@ export type ResolverObservation = Readonly<{
     supportedAttachmentTransport?: boolean;
     /** The bounded backend read saw more evidence rows than it can safely summarize. */
     evidenceOverflow?: boolean;
+    restoreCancellationAllowed?: boolean;
+    restoreCancellationBlockedReason?: string | null;
+    restoreCancellationStateHash?: string | null;
+    duplicateReviewRequired?: boolean;
+    duplicateBlockerPublicIds?: readonly string[];
+    identityDecisionRequired?: boolean;
+    paymentBlockers?: readonly PaymentWorkflowBlocker[];
+    scheduleDeferral?: Readonly<Record<string, unknown>>;
+    scheduleDeferralEligible?: boolean;
+    scheduleDeferralBlockedReason?: string;
 }>;
 
 export type ResolverStep = Readonly<{
     toolName: string;
-    arguments: Readonly<Record<string, string>>;
+    arguments: Readonly<Record<string, string | readonly string[]>>;
     requiredInputs: readonly string[];
     requiresConfirmation: boolean;
 }>;
@@ -41,23 +56,24 @@ export type ResolverResult = Readonly<{
     workflowVersion: string;
     catalogVersion: string;
     policyRevision: string;
-    observed: Readonly<{ state: ResolverObservation["state"] | null; loanType: ResolverObservation["loanType"] | null; evidenceReady: boolean }>;
+    observed: Readonly<{ state: ResolverObservation["state"] | null; loanType: ResolverObservation["loanType"] | null; evidenceReady: boolean; restoreCancellationAllowed: boolean | null; restoreCancellationBlockedReason: string | null; restoreCancellationStateHash: string | null; paymentBlockers: readonly PaymentWorkflowBlocker[]; scheduleDeferral?: ResolverObservation["scheduleDeferral"]; scheduleDeferralEligible?: boolean; scheduleDeferralBlockedReason?: string }>;
     status: "needs_input" | "next_step" | "confirmation_required" | "blocked" | "refresh_required" | "connection_required";
     nextSteps: readonly ResolverStep[];
     blockers: readonly string[];
     prohibitedTools: readonly string[];
     reevaluateOn: "target_change" | "evidence_change" | "preview_expiry" | "version_change";
+    toolHelp?: Readonly<{ toolName: string; guidanceVersion: string; purpose: string; whenToUse: readonly string[]; prerequisites: readonly string[]; sideEffects: readonly string[]; retrySafety: string; commonErrors: readonly Readonly<{ code: string; recovery: string }>[]; requiresHumanConfirmation: boolean; requiredInputs: readonly string[]; relatedTools: readonly string[] }>;
 }>;
 
-export type ResolverProfile = Readonly<{ profile: ToolProfile; catalogVersion: string; workflowVersion?: string }>;
+export type ResolverProfile = Readonly<{ profile: ToolProfile; catalogVersion: string; workflowVersion?: string; guidanceVersion?: string; catalog?: readonly McpToolDefinition[] }>;
 type TargetArgumentKind = WorkflowTargetKind | "loan_for_disbursement";
 
 const targetArguments: Readonly<Record<string, TargetArgumentKind>> = Object.freeze({
     "borrower.resolve-and-portfolio": "borrower", "loan.inspect-context": "loan", "payment.match-context": "payment_intake", "intake.get": "payment_intake",
-    "payment.preview": "payment_intake", "payment.post": "payment_intake", "evidence.prepare": "payment_intake", "evidence.finalize": "payment_intake", "evidence.import-chatgpt-file": "payment_intake",
+    "payment.preview": "payment_intake", "payment.post": "payment_intake", "payment.replacement.inspect": "payment_intake", "payment.replacement.create": "payment_intake", "payment.replacement.duplicate-review.preview": "payment_intake", "payment.evidence-recovery.preview": "payment_intake", "payment.evidence-recovery.execute": "payment_intake", "evidence.prepare": "payment_intake", "evidence.finalize": "payment_intake", "evidence.import-chatgpt-file": "payment_intake",
     "payment.evidence-supplement.import-chatgpt-file": "payment_intake", "payment.evidence-supplement.record": "payment_intake", "loan.disbursement.list": "loan_for_disbursement",
     "loan.disbursement.draft": "loan", "loan.disbursement.evidence.prepare": "loan_disbursement", "loan.disbursement.evidence.finalize": "loan_disbursement", "loan.disbursement.evidence.import-chatgpt-file": "loan_disbursement",
-    "loan.disbursement.post": "loan_disbursement", "loan.settlement.preview": "loan", "loan.activate": "loan", "loan.draft": "borrower", "renewal.preview": "loan",
+    "loan.disbursement.post": "loan_disbursement", "loan.settlement.preview": "loan", "loan.activate": "loan", "loan.draft": "borrower", "renewal.preview": "loan", "payment.restore.cancel": "payment_intake", "loan.schedule.defer": "loan",
 });
 
 const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -67,16 +83,20 @@ const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freez
     "loan.disbursement.draft": ["grossAmount", "loanAttributedAmount", "channel", "disbursedAt"], "loan.disbursement.post": ["idempotencyKey"],
     "loan.preview": ["principal", "interestRate", "termMonths", "repaymentType", "startDate"],
     "loan.draft": ["borrowerPublicId", "principal", "interestRate", "termMonths", "repaymentType", "startDate"], "loan.activate": ["idempotencyKey"], "loan.settlement.preview": ["asOfDate"], "renewal.preview": ["oldLoanPublicId", "requestedPrincipal"],
-    "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "loan.disbursement.list": ["loanPublicId"],
+    "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "payment.replacement.inspect": ["paymentIntakePublicId"], "payment.replacement.create": ["paymentIntakePublicId", "reason", "idempotencyKey", "expectedStateHash"], "payment.replacement.duplicate-review.preview": ["canonicalPaymentIntakePublicId", "candidatePaymentIntakePublicIds", "reason", "idempotencyKey"], "payment.evidence-recovery.preview": ["sourcePaymentIntakePublicId", "reason", "expectedCount", "reuseEvidence", "idempotencyKey"], "loan.disbursement.list": ["loanPublicId"],
+    "payment.restore.cancel": ["expectedStateHash", "reason", "idempotencyKey"],
+    "loan.schedule.defer": ["schedulePublicId", "reason", "idempotencyKey", "confirmed"],
 });
 
 const targetArgumentFields: Readonly<Record<string, string>> = Object.freeze({
     "renewal.preview": "oldLoanPublicId",
+    "payment.restore.cancel": "restoreDraftPublicId",
+    "payment.replacement.duplicate-review.preview": "canonicalPaymentIntakePublicId", "payment.evidence-recovery.preview": "sourcePaymentIntakePublicId",
 });
 
 function step(toolName: string, input: ResolverInput, inputs: readonly string[] = requiredInputs[toolName] ?? [], requiresConfirmation = false): ResolverStep | null {
     if (!MCP_TOOL_NAMES.includes(toolName as never) || !toolIsVisibleInProfile(toolName, input.profile)) return null;
-    const arguments_: Record<string, string> = {};
+    const arguments_: Record<string, string | readonly string[]> = {};
     const targetKind = targetArguments[toolName];
     if (targetKind) {
         if (!input.target) return null;
@@ -89,16 +109,33 @@ function step(toolName: string, input: ResolverInput, inputs: readonly string[] 
     return { toolName, arguments: arguments_, requiredInputs: inputs, requiresConfirmation };
 }
 
+function identityDecisionStep(input: ResolverInput, participantPublicIds: readonly string[]) {
+    if (!input.target || !MCP_TOOL_NAMES.includes("payment.identity-decision.preview" as never) || !toolIsVisibleInProfile("payment.identity-decision.preview", input.profile)) return null;
+    return { toolName: "payment.identity-decision.preview", arguments: { participantPaymentIntakePublicIds: [input.target.publicId, ...participantPublicIds] }, requiredInputs: ["participantPaymentIntakePublicIds", "decision", "reason", "idempotencyKey"], requiresConfirmation: false } satisfies ResolverStep;
+}
+
 function result(input: ResolverInput, profile: ResolverProfile, status: ResolverResult["status"], nextSteps: readonly (ResolverStep | null)[], blockers: readonly string[] = [], prohibitedTools: readonly string[] = []): ResolverResult {
     return {
         workflowId: `creditsync.${input.intent}`, workflowVersion: WORKFLOW_VERSION, catalogVersion: profile.catalogVersion, policyRevision: WORKFLOW_POLICY_REVISION,
-        observed: { state: null, loanType: null, evidenceReady: false }, status, nextSteps: nextSteps.filter((value): value is ResolverStep => value !== null).slice(0, 3), blockers: blockers.slice(0, 8), prohibitedTools: prohibitedTools.slice(0, 8),
+        observed: { state: null, loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null, paymentBlockers: [] }, status, nextSteps: nextSteps.filter((value): value is ResolverStep => value !== null).slice(0, 3), blockers: blockers.slice(0, 8), prohibitedTools: prohibitedTools.slice(0, 8),
         reevaluateOn: input.intent === "tool_help" ? "version_change" : input.attachments && input.attachments !== "none" ? "evidence_change" : "target_change",
     };
 }
 
+function helpMetadata(name: string, guidance: ToolGuidance, profile: ToolProfile, catalog?: readonly McpToolDefinition[]) {
+    const schema = catalog?.find((tool) => tool.name === name)?.inputSchema;
+    const required = schema && Array.isArray(schema.required) ? schema.required.filter((value): value is string => typeof value === "string") : [];
+    return {
+        toolName: name, guidanceVersion: TOOL_GUIDANCE_VERSION, purpose: guidance.purpose,
+        whenToUse: guidance.whenToUse, prerequisites: guidance.prerequisites, sideEffects: guidance.sideEffects,
+        retrySafety: guidance.retrySafety, commonErrors: guidance.commonErrors,
+        requiresHumanConfirmation: guidance.requiresHumanConfirmation, requiredInputs: required,
+        relatedTools: guidance.relatedTools.filter((tool) => toolIsVisibleInProfile(tool, profile)),
+    };
+}
+
 function withObservation(value: ResolverResult, observation: ResolverObservation): ResolverResult {
-    return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true } };
+    return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true, restoreCancellationAllowed: observation.restoreCancellationAllowed ?? null, restoreCancellationBlockedReason: observation.restoreCancellationBlockedReason ?? null, restoreCancellationStateHash: observation.restoreCancellationStateHash ?? null, paymentBlockers: observation.paymentBlockers ?? [], ...(observation.scheduleDeferral ? { scheduleDeferral: observation.scheduleDeferral } : {}), ...(observation.scheduleDeferralEligible !== undefined ? { scheduleDeferralEligible: observation.scheduleDeferralEligible } : {}), ...(observation.scheduleDeferralBlockedReason ? { scheduleDeferralBlockedReason: observation.scheduleDeferralBlockedReason } : {}) } };
 }
 
 function validTarget(input: ResolverInput) {
@@ -106,7 +143,7 @@ function validTarget(input: ResolverInput) {
 }
 
 function expectedTarget(intent: WorkflowIntent): WorkflowTargetKind | null {
-    if (intent === "receive_payment") return "payment_intake";
+    if (intent === "receive_payment" || intent === "cancel_payment_restore") return "payment_intake";
     if (["close_loan", "renew_loan"].includes(intent)) return "loan";
     return null;
 }
@@ -122,38 +159,85 @@ function attachmentStep(input: ResolverInput): ResolverStep | null {
 export function resolveWorkflowPolicy(input: ResolverInput, observation: ResolverObservation, profile: ResolverProfile): ResolverResult {
     const base = () => withObservation(result(input, profile, "needs_input", [], []), observation);
     const currentWorkflowVersion = profile.workflowVersion ?? WORKFLOW_VERSION;
+    const currentGuidanceVersion = profile.guidanceVersion ?? TOOL_GUIDANCE_VERSION;
     if (input.knownWorkflowVersion && input.knownWorkflowVersion !== currentWorkflowVersion) return withObservation(result(input, profile, "refresh_required", [], ["WORKFLOW_VERSION_STALE"]), observation);
     if (input.knownCatalogVersion && input.knownCatalogVersion !== profile.catalogVersion) return withObservation(result(input, profile, "refresh_required", [], ["CATALOG_VERSION_STALE"]), observation);
+    if (input.knownGuidanceVersion && input.knownGuidanceVersion !== currentGuidanceVersion) return withObservation(result(input, profile, "refresh_required", [], ["GUIDANCE_VERSION_STALE"]), observation);
     if (input.profile !== profile.profile) return withObservation(result(input, profile, "connection_required", [], ["PROFILE_CONTEXT_MISMATCH"]), observation);
     if (input.intent === "tool_help") {
         if (!input.toolName || !MCP_TOOL_NAMES.includes(input.toolName as never)) return withObservation(result(input, profile, "needs_input", [], ["TOOL_NAME_REQUIRED"]), observation);
         if (!toolIsVisibleInProfile(input.toolName, profile.profile)) return withObservation(result(input, profile, "connection_required", [], ["TOOL_NOT_VISIBLE_ON_PROFILE"]), observation);
         const inventory = WORKFLOW_TOOL_INVENTORY[input.toolName as keyof typeof WORKFLOW_TOOL_INVENTORY];
-        if (!inventory || inventory.workflow !== "inspect") return withObservation(result(input, profile, "needs_input", [], ["TOOL_HELP_REQUIRES_WORKFLOW_RESOLUTION"], [input.toolName]), observation);
+        const guidance = TOOL_GUIDANCE[input.toolName as keyof typeof TOOL_GUIDANCE];
+        if (!inventory || !guidance) return withObservation(result(input, profile, "needs_input", [], ["TOOL_HELP_UNAVAILABLE"], [input.toolName]), observation);
         const targetRequired = targetArguments[input.toolName] !== undefined;
         if (targetRequired && (observation.targetAvailable !== true || observation.identityResolved !== true || (observation.state !== "mutable" && observation.state !== "posted"))) {
-            return withObservation(result(input, profile, "needs_input", [], ["TARGET_REQUIRES_AUTHORITATIVE_READ"]), observation);
+            return withObservation({ ...result(input, profile, "needs_input", [], [input.target ? "TARGET_REQUIRES_AUTHORITATIVE_READ" : "TARGET_REQUIRED_FOR_INSPECTION"]), toolHelp: helpMetadata(input.toolName, guidance, profile.profile, profile.catalog) }, observation);
         }
-        const helpInputs = input.toolName === "borrower.resolve-and-portfolio" && input.target?.kind === "borrower"
-            ? []
-            : requiredInputs[input.toolName] ?? [];
-        const helpStep = step(input.toolName, input, helpInputs);
-        return withObservation(result(input, profile, helpStep ? "next_step" : "needs_input", [helpStep], helpStep ? [] : ["EXACT_TARGET_REQUIRED"]), observation);
+        const servingTool = profile.catalog?.find((tool) => tool.name === input.toolName);
+        const readOnlyInspection = targetRequired && inventory.workflow === "inspect" && (servingTool?.annotations.readOnlyHint ?? guidance.sideEffects.length === 0);
+        const inspect = readOnlyInspection ? step(input.toolName, input, input.toolName === "borrower.resolve-and-portfolio" && input.target?.kind === "borrower" ? [] : undefined) : null;
+        const documentationOnly = servingTool?.annotations.readOnlyHint ?? guidance.sideEffects.length === 0;
+        const requiresResolution = !documentationOnly && inventory.workflow !== "inspect";
+        const blockers = requiresResolution ? ["TOOL_HELP_REQUIRES_WORKFLOW_RESOLUTION"] : [];
+        return withObservation({ ...result(input, profile, inspect ? "next_step" : "needs_input", [inspect], blockers, requiresResolution ? [input.toolName] : []), toolHelp: helpMetadata(input.toolName, guidance, profile.profile, profile.catalog) }, observation);
     }
     const rule = workflowRule(input.intent);
     if (!rule.profiles.includes(profile.profile)) return withObservation(result(input, profile, "connection_required", [], ["WORKFLOW_REQUIRES_ANOTHER_CONNECTION"]), observation);
+    if (input.intent === "defer_installment") {
+        if (!input.target || input.target.kind !== "loan" || !validTarget(input)) return withObservation(result(input, profile, "needs_input", [], ["EXACT_LOAN_TARGET_REQUIRED"]), observation);
+        if (observation.targetAvailable !== true || observation.identityResolved !== true) return withObservation(result(input, profile, "needs_input", [], ["TARGET_UNAVAILABLE"]), observation);
+        const attachments = input.attachments ?? "unknown";
+        if (attachments === "unknown") return withObservation(result(input, profile, "needs_input", [], ["ATTACHMENT_AVAILABILITY_UNKNOWN"]), observation);
+        if (attachments === "present") return withObservation(result(input, profile, "blocked", [], ["HUMAN_REVIEW_REQUIRED_UNSUPPORTED_ATTACHMENT_TRANSPORT"], ["loan.schedule.defer"]), observation);
+        if (!input.schedulePublicId) return withObservation(result(input, profile, "next_step", [step("loan.inspect-context", input)], ["SCHEDULE_SELECTION_REQUIRED"]), observation);
+        if (observation.scheduleDeferralEligible !== true) return withObservation(result(input, profile, "blocked", [], [observation.scheduleDeferralBlockedReason ?? "SCHEDULE_DEFERRAL_REQUIRES_REVIEW"], ["loan.schedule.defer"]), observation);
+        const defer = step("loan.schedule.defer", input, ["reason", "idempotencyKey", "confirmed"], true);
+        if (!defer) return withObservation(result(input, profile, "connection_required", [], ["SCHEDULE_DEFERRAL_TOOL_UNAVAILABLE"]), observation);
+        return withObservation(result(input, profile, "confirmation_required", [{ ...defer, arguments: { loanPublicId: input.target.publicId, schedulePublicId: input.schedulePublicId } }], [], ["loan.schedule.defer"]), observation);
+    }
     if (!validTarget(input)) return withObservation(result(input, profile, "needs_input", [], ["EXACT_TARGET_REQUIRED"]), observation);
     if (expectedTarget(input.intent) && input.target!.kind !== expectedTarget(input.intent)) return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
     if (input.intent === "originate_loan" && input.target!.kind !== "borrower" && input.target!.kind !== "loan") return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
     if (observation.targetAvailable !== true) return withObservation(result(input, profile, "needs_input", [], [observation.targetAvailable === false ? "TARGET_UNAVAILABLE" : "TARGET_AVAILABILITY_REQUIRES_AUTHORITATIVE_READ"]), observation);
     if (observation.identityResolved !== true) return withObservation(result(input, profile, "needs_input", [], [observation.identityResolved === false ? "IDENTITY_REQUIRES_REVIEW" : "IDENTITY_REQUIRES_AUTHORITATIVE_READ"]), observation);
-    if (observation.state !== "mutable" && observation.state !== "posted") return withObservation(result(input, profile, "needs_input", [], [observation.state === "unresolved" ? "TARGET_STATE_UNRESOLVED" : "TARGET_STATE_REQUIRES_AUTHORITATIVE_READ"]), observation);
+    if (input.intent === "cancel_payment_restore") {
+        if (input.target!.kind !== "payment_intake") return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
+        if (observation.state !== "mutable") return withObservation(result(input, profile, "blocked", [], ["RESTORE_DRAFT_MUST_BE_UNPOSTED"], ["payment.restore.cancel"]), observation);
+        if (observation.restoreCancellationAllowed !== true) return withObservation(result(input, profile, "blocked", [], [observation.restoreCancellationBlockedReason ?? "RESTORE_CANCELLATION_NOT_ALLOWED"], ["payment.restore.cancel"]), observation);
+        if (!observation.restoreCancellationStateHash) return withObservation(result(input, profile, "refresh_required", [], ["RESTORE_CANCELLATION_STATE_HASH_REQUIRED"]), observation);
+        const cancel = step("payment.restore.cancel", input, ["reason", "idempotencyKey"], true);
+        if (!cancel) return withObservation(result(input, profile, "connection_required", [], ["RESTORE_CANCELLATION_TOOL_UNAVAILABLE"]), observation);
+        return withObservation(result(input, profile, "confirmation_required", [{
+            ...cancel,
+            arguments: { restoreDraftPublicId: input.target!.publicId, expectedStateHash: observation.restoreCancellationStateHash },
+        }], [], ["payment.restore.execute", "payment.cancel"]), observation);
+    }
+    if (observation.state !== "mutable" && observation.state !== "posted" && observation.state !== "cancelled") return withObservation(result(input, profile, "needs_input", [], [observation.state === "unresolved" ? "TARGET_STATE_UNRESOLVED" : "TARGET_STATE_REQUIRES_AUTHORITATIVE_READ"]), observation);
     const attachments = input.attachments ?? "unknown";
     if (attachments === "unknown") return withObservation(result(input, profile, "needs_input", [], ["ATTACHMENT_AVAILABILITY_UNKNOWN"]), observation);
     if (input.expectedAttachmentCount !== undefined && (attachments !== "present" || !Number.isSafeInteger(input.expectedAttachmentCount) || input.expectedAttachmentCount < 1 || input.expectedAttachmentCount > 20)) return withObservation(result(input, profile, "needs_input", [], ["EXPECTED_ATTACHMENT_COUNT_REQUIRED"]), observation);
     if (input.intent === "inspect") {
         const inspectStep = input.target?.kind === "borrower" ? step("borrower.resolve-and-portfolio", input, []) : input.target?.kind === "loan" ? step("loan.inspect-context", input) : input.target?.kind === "payment_intake" ? step("intake.get", input) : null;
-        return withObservation(result(input, profile, inspectStep ? "next_step" : "needs_input", [inspectStep], inspectStep ? [] : ["TARGET_REQUIRES_PARENT_READ"]), observation);
+        const restoreCancelStep = input.target?.kind === "payment_intake" && observation.restoreCancellationAllowed === true
+            ? step("payment.restore.cancel", input, ["reason", "idempotencyKey"], true)
+            : null;
+        const restoreCancelNextStep = restoreCancelStep && observation.restoreCancellationStateHash
+            ? { ...restoreCancelStep, arguments: { restoreDraftPublicId: input.target!.publicId, expectedStateHash: observation.restoreCancellationStateHash } }
+            : null;
+        return withObservation(result(input, profile, restoreCancelNextStep ? "confirmation_required" : inspectStep ? "next_step" : "needs_input", [inspectStep, restoreCancelNextStep], inspectStep ? [] : ["TARGET_REQUIRES_PARENT_READ"]), observation);
+    }
+    if (input.target!.kind === "payment_intake" && input.intent === "receive_payment" && observation.duplicateReviewRequired === true && observation.identityDecisionRequired === true) {
+        const identityStep = identityDecisionStep(input, observation.duplicateBlockerPublicIds ?? []);
+        return withObservation(result(input, profile, identityStep ? "next_step" : "connection_required", [identityStep], ["PAYMENT_DUPLICATE_REQUIRES_REVIEW"], ["payment.preview", "payment.post", "payment.replacement.create"]), observation);
+    }
+    if (input.target!.kind === "payment_intake" && observation.state === "cancelled" && input.intent === "receive_payment") {
+        if (observation.duplicateReviewRequired === true) {
+            const identityStep = observation.identityDecisionRequired ? identityDecisionStep(input, observation.duplicateBlockerPublicIds ?? []) : null;
+            return withObservation(result(input, profile, "next_step", [identityStep ?? step("payment.replacement.duplicate-review.preview", input)], ["PAYMENT_DUPLICATE_REQUIRES_REVIEW"], ["payment.post", "payment.replacement.create"]), observation);
+        }
+        if (observation.evidenceRequired === true && observation.evidenceReady !== true) return withObservation(result(input, profile, "next_step", [step("payment.evidence-recovery.preview", input)], ["PAYMENT_REPLACEMENT_EVIDENCE_NOT_READY"], ["payment.post", "payment.replacement.create"]), observation);
+        return withObservation(result(input, profile, "next_step", [step("payment.replacement.inspect", input)], ["CANCELLED_PAYMENT_REQUIRES_REPLACEMENT_INSPECTION"], ["payment.post", "evidence.prepare", "evidence.finalize"]), observation);
     }
     if (input.target!.kind === "payment_intake" && observation.state === "posted" && (input.intent === "receive_payment" || input.intent === "attach_evidence")) {
         const supplement = attachments === "present" ? step("payment.evidence-supplement.import-chatgpt-file", input, ["idempotencyKey", "chatgptFile"], true) : step("payment.evidence-supplement.record", input, undefined, true);

@@ -1,5 +1,244 @@
 # Changelog
 
+## v0.4.72 - 2026-10-08
+
+### Added
+
+- Added role-filtered mobile bottom navigation with bilingual landmark labels, nested-route current states, keyboard focus, and shared safe-area clearance across content, footer, drawer, and AI assistant. The AI chat fits short mobile viewports and the footer reserves space beside the floating assistant.
+
+### Changed
+
+- Kept remaining destinations in the existing mobile drawer and aligned the authenticated UI version with this release.
+
+## v0.4.71 - 2026-10-07
+
+### Added
+
+- Added review-first manual receipt entry across multiple contracts with exact Decimal allocation totals, optional shared evidence, Bangkok receipt time, resumable upload retry, and shared receipt links in each contract's payment history.
+
+### Changed
+
+- Integrated multi-contract receipt entry with the existing selected-date floating accrual payment workflow on main, retaining both features and their regression coverage.
+- Clarified that a separate-transfer batch is for independent receipts, while multiple supporting files belong to one receipt; documented the workflow and review handoff.
+- Updated the authenticated UI footer to application version 0.4.71 for this release.
+
+### Fixed
+
+- Restored the Accrual table payment action by returning the stored floating accrual cycle and interest period in Web loan details, matching posting eligibility while preserving the frozen MCP loan shape.
+- Keep receipt error recovery linked to the owned draft, protect unknown creation outcomes on exit, preserve full public-money precision in slip differences, and support keyboard focus, reduced motion, localized evidence selection, and accurate guidance for locally duplicated files.
+- Preserved the repayment shortcut and its owned UI fixes for amount blur formatting, select spacing, contextual hints, floating-loan schedule handling, and retained-draft Cancel disclosure; uploads keep tracing context and duplicate review targets cannot become retryable intakes.
+
+## v0.4.70 - 2026-10-07
+
+### Added
+
+- Added selected-date floating daily-interest payment previews and confirmed postings, with immutable target provenance, exact cached balance refresh, receipt/audit identifiers, safe retries, historical allocation checks, and per-accrual receipt history in Loan Detail.
+- Added a bilingual Accrual payment dialog that records actual Bangkok receipt time separately from selected accrual dates and preserves draft/post idempotency through retries.
+
+### Fixed
+
+- Repaired the pre-existing duplicate Drizzle snapshot UUID/parent chain in snapshots 0057/0058 so generated migration metadata can advance consistently; schema tables were unchanged by that metadata repair.
+- Preserved full 29-digit THB precision in floating allocation integrity checks, including partially paid accruals with a remaining satang value.
+- Kept selected-payment command identity through uncertain authorization failures and allowed an authenticated stale proposal to return safely to a fresh preview of the same intake; translated the future-receipt and accrual-after-receipt blockers.
+- Corrected the earlier hypothetical legacy-baseline test fixture: migration 0030 cutover and the deferred paid-cache trigger require matching allocation lineage, so the unsupported cache-only state was not a production defect. Current-capacity checks use real receipts and valid allocation provenance.
+
+## v0.4.69 - 2026-10-07
+
+### Changed
+
+- Recorded the approved specification and implementation plan for selected-date floating daily interest payments with independent actual receipt timestamps and visible per-accrual receipt history.
+- Added the reviewed design for a production Bruno CLI collection covering borrower/loan inspection, floating daily-loan origination, and stepwise payment evidence and posting.
+- Integrated the six main-branch history commits while retaining the verified 147-tool discovery release, schedule-deferral workflow, and backend Docker context protections.
+- Synchronized the authenticated UI release footer with application `0.4.69`, MCP schema `1.0`, and the actual CreditSync plugin `12.0.0` manifest; point its changelog link at this release branch until it is integrated.
+- Excluded environment files, secrets, dependencies, generated output, and logs from backend Docker build contexts, preserving the upstream context-protection fix.
+
+### Fixed
+
+- Show all floating-loan accrual days through the current Bangkok business date in Loan Detail using read-only backend projections, retain persisted reversal/prepayment history, and count daily advance interest only once in payment health.
+- Added a regression check that derives the displayed application version from the newest changelog heading and the plugin version from its manifest.
+
+## v0.4.68 - 2026-10-07
+
+### Fixed
+
+- Updated the MCP discovery verification report to cite the latest 11-gate independent bundle at the final acceptance HEAD, including the passing pinned conformance run; retained the earlier blocked attempt as history.
+
+## v0.4.67 - 2026-10-07
+
+### Changed
+
+- Updated MCP discovery acceptance records with independent final-HEAD gate results, including the successful pinned conformance recheck; retained the earlier blocked attempt as history.
+
+## v0.4.66 - 2026-10-06
+
+### Added
+
+- Added the Task 6 verification report for MCP discovery, including serialized backend results, frontend/plugin gates, reproducible catalog artifacts, measured wire bytes, historical live-catalog mismatch evidence, and explicit live/client acceptance boundaries.
+
+### Changed
+
+- Updated the root README to describe the current CreditSync plugin 12.0.0, 147-tool catalog, seven profiles, and authorized client refresh procedure.
+
+## v0.4.65 - 2026-10-06
+
+### Added
+
+- Synchronized CreditSync plugin 12.0.0 with the actual 147-tool catalog, seven profile snapshots, 11 retained skills, a generated bounded tool guide, deterministic discovery cases, and local sanitized trace grading; plugin schema breaking changes now target 13.0.0.
+- Added explicit schedule-deferral workflow guidance, profile-aware search phrases, synthetic confirmed/stop orchestration cases, and provider-host capability/refresh documentation.
+
+### Changed
+
+- Added precise Thai/English installment-deferral search phrases and exact-name precedence after deterministic regression cases exposed missed and noisy matches; metadata-search metrics are documented separately from model tool-choice evaluation.
+
+### Fixed
+
+- Require sanitized trace confirmations to occur before the corresponding financial tool call; reject traces with missing, late, or invalid confirmation positions.
+
+## v0.4.64 - 2026-10-06
+
+### Added
+
+- Added typed, immutable, exhaustive MCP guidance for the existing 145-tool catalog, canonical content hashing, shared descriptions and initialization instructions across transports, capability-specific relationships, conditional borrower inputs, and safe retry/confirmation guidance. Updated authorized implementation-worker routing to GPT-6 Luna Speed with medium reasoning and Fast tier.
+- Added read-only `tool.catalog.search` for bounded Thai/English capability lookup across the serving catalog, with profile filtering, version-bound cursors, and explicit clarification/connection/refresh statuses.
+- Added strict, confirmed `loan.schedule.defer` MCP registration, authoritative read-only resolver inspection, and serialized idempotent deferral replay. A deferral moves one fully unpaid installment to the day after the current schedule tail without recording a payment.
+- Added the exactly eight-tool read-only `/mcp/discovery` profile and complete profile-filtered named help with schema-derived required inputs and independent guidance version checks; advanced the resolver contract to 1.2.0.
+
+### Fixed
+
+- Accept the `discovery` profile in catalog-search output validation, including profile connection hints returned from `/mcp/discovery`.
+- Reject valid catalog cursors whose offset is outside the ranked result set before profile filtering can return a connection hint.
+- Keep the ignored MCP discovery progress ledger local instead of tracking it in Git.
+- Corrected the persisted, non-idempotent `loan.cancel.preview` MCP policy and guidance; tightened capability search cursor validation, bounded contracts, high-risk Thai/English ranking, hidden-profile handling, and transport spoof/audit regressions. Corrected conditional evidence-recovery, payment-date confirmation, funding retry/source, and intermediary attribution guidance.
+- Replayed schedule deferrals under a tenant/idempotency-key lock and require the existing audit record on replay; added disposable financial invariants and resolver selection guards.
+
+## v0.4.63 - 2026-09-25
+
+### Added
+
+- Recorded approval of the recoverable payment workspace specification and added its phased implementation plan, shared service contracts, regression and migration gates, supervised tmux handoff, and separately authorized backlog recovery procedure; documentation only, with no runtime or financial changes.
+
+## v0.4.62 - 2026-09-25
+
+### Added
+
+- Documented the proposed recoverable payment workspace, unified impact previews, evidence-slot retries, historical correction, intermediary routing, bounded locking, and end-to-end acceptance criteria; documentation only, with no runtime or financial changes.
+
+## v0.4.61 - 2026-09-25
+
+### Fixed
+
+- Allow independently completed recovery groups to merge when every incomplete historical member has its own explicitly authorized coverage, while preserving single-post protection.
+
+## v0.4.60 - 2026-09-25
+
+### Fixed
+
+- Follow explicitly executed recovery receipts across cancelled recovery successors without weakening evidence requirements; independently test incomplete evidence, repeated recovery posting, collector permission drift, lock timeout/retry, and mutable duplicate resolution.
+- Require fresh UI confirmation after every identity preview, with participant snapshot and time-difference regression coverage.
+
+## v0.4.59 - 2026-09-25
+
+### Fixed
+
+- Fixed payment identity evidence coverage to await every audited authorization, reject incomplete self-authorizing canonicals, and permit only receipt-backed recovery successors to cover an immutable incomplete source; added a no-partial-write database regression.
+
+## v0.4.58 - 2026-09-25
+
+### Fixed
+
+- Payment identity decisions now fail closed on incomplete participant evidence, revalidate expanded component ownership on execute/replay, route mutable duplicate blockers through explicit identity review, and expose bounded amount/payer/time snapshots for confirmation.
+- Payment workflow advisory locks now use transaction-local bounded waits with actionable idempotent retry context.
+- Bumped the frozen CreditSync plugin contract to 11.0.0 for the identity-preview output schema.
+
+## v0.4.57 - 2026-09-25
+
+### Fixed
+
+- Added disposable PostgreSQL regressions for validated legacy identity membership expansion, posted replacement-descendant merge rejection, resolver-service observation routing, and both lock-barrier orders for overlapping identity decisions.
+
+## v0.4.56 - 2026-09-25
+
+### Fixed
+
+- Hardened payment identity duplicate detection so active same-payment components cannot be bypassed by ancestor exemptions, valid legacy duplicate-review memberships participate in transitive groups, expanded component authorization is enforced for identity decisions, and resolver observations route mutable or mismatched duplicate candidates to fresh identity review.
+
+## v0.4.55 - 2026-09-24
+
+### Added
+
+- Added disposable PostgreSQL concurrency regressions for cancel/post, evidence finalize/cancel, batch posting, overlapping identity groups, adjacent-minute identity creation, replacement/group extension, and committed-response replay.
+
+### Changed
+
+- Applied replay-safe transient transaction retry to payment matching previews and evidence finalization so serialization/deadlock failures replay the complete operation.
+### Fixed
+
+- Hardened payment identity recovery against transitive superseding decisions, replacement-lineage unions, active-posting bypasses, and resolver arguments that did not match the closed MCP UUID-array schema.
+- Included evidence state in cancellation capability hashes so a finalize/cancel race fails closed with a stale-state conflict.
+
+## v0.4.54 - 2026-09-23
+
+### Added
+
+- Added exact participant-scoped identity decision preview/execute receipts, confirmed cancelled-evidence recovery preview/execute receipts, authenticated REST routes, MCP tools, and Payment Inbox actions with preserved requirement floors and legal successor handling.
+
+### Changed
+
+- Revalidated immutable identity snapshots and complete transitive groups against active postings before duplicate authorization, fixed all-reviewed warning handling, synchronized tenant-first duplicate locks across minute boundaries, and traversed wrapped PostgreSQL causes for bounded replay-safe retry.
+- Added explicit audited recovery requirement reinterpretation, replay ownership checks, and deterministic create-vs-create disposable-DB contention coverage.
+- Regenerated the CreditSync 10.9.0 MCP contract and profile inventory at 145 tools.
+
+## v0.4.53 - 2026-09-23
+
+### Added
+
+- Added typed payment recovery blockers, append-only tenant-scoped identity decision previews/executions, immutable participant snapshots, evidence-recovery draft creation, deterministic workflow mutex helpers, and bounded retry classification for supported transient PostgreSQL contention.
+
+### Changed
+
+- Extended replacement inspection with closed structured next-action blockers and synchronized the frozen MCP contract; recovery drafts preserve cancelled-source history and evidence requirements.
+
+## v0.4.52 - 2026-09-23
+
+### Added
+
+- Added migration 0081 and an audited, explicit canonical-evidence selection for the one-requirement/no-attempt/no-evidence cancelled duplicate case, with immutable source history, stale guards, unchanged legacy review hashes, and regressions for selection, evidence drift, and MCP audit metadata.
+- Synchronized the CreditSync plugin to 10.8.0 and regenerated the 141-tool MCP contract and profile snapshots.
+
+## v0.4.51 - 2026-09-22
+
+### Added
+
+- Added audited, append-only duplicate-review previews and executions for exact cancelled payment duplicates, preserving ordinary replacement/posting guards and immutable payment history.
+- Synchronized the CreditSync plugin to 10.7.0 and its generated MCP contract/profile snapshots.
+
+## v0.4.50 - 2026-09-22
+
+### Added
+
+- Added append-only cancelled-payment replacement lineage with immutable inherited-evidence references, locked idempotent draft creation, effective-evidence resolution, safe MCP inspection/creation tools, resolver guidance, plugin contract/evals, and disposable-DB coverage. Replacements retain the original cancelled record and require a fresh ordinary preview and explicit post.
+
+### Changed
+
+- Released the synchronized CreditSync plugin contract and catalog as 10.6.0, preserving existing restore-cancellation and floating-reversal behavior.
+
+## v0.4.49 - 2026-09-22
+
+### Fixed
+
+- Resolve compensated floating payment allocations before applying business-date cutoffs in interest and penalty projections. Backdated grouped payments after a reversal/repost no longer count voided receipts, while original ledger history and genuine over-allocation guards remain intact. Restore execution reports a stale preview when intervening payments consume previously available accrual capacity. Added disposable PostgreSQL regressions for grouped posting, missing-accrual materialization, retry idempotency, and restored unpaid interest/penalties.
+
+## v0.4.48 - 2026-09-21
+
+### Added
+
+- Added an audited, idempotent `intermediary.collection.cancel` workflow for exact unposted collections, including stale-state checks, release of editable remittance allocations, and MCP/plugin contract support.
+
+## v0.4.47 - 2026-09-21
+
+### Added
+
+- Added audited cancellation for eligible unposted payment-restore drafts through `payment.restore.cancel`; cancellation preserves the reversed source, restore evidence, and append-only history without creating transactions or changing balances, while allowing a later restore attempt with a new key.
 ## v0.4.46 - 2026-09-14
 
 ### Added
@@ -1631,3 +1870,12 @@
 
 - Create the tenant-scoped replacement parent unique key before child foreign keys and preserve all legacy loan statuses alongside `replaced`.
 - Preserve every loan lifecycle status used by application workflows, including `closed`, `renewed`, `restructured`, `cancelled`, `settled`, and `reversed`.
+## v0.4.47 - 2026-09-22
+
+### Added
+
+- Added append-only cancelled-payment replacement lineage, immutable evidence references, concurrency-safe idempotent replacement drafts, and safe MCP/plugin workflow guidance.
+
+### Changed
+
+- Resolved effective payment evidence across direct, supplement, and replacement lineage reads while keeping public responses limited to safe UUID and metadata fields.

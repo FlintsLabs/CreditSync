@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-d816cad8ed74b1d2",
   "profile": "full",
-  "toolCount": 135,
+  "toolCount": 147,
   "tools": [
     "borrower.search",
     "borrower.portfolio",
@@ -33,6 +33,14 @@
     "payment.evidence-supplement.record",
     "payment.preview",
     "payment.cancel",
+    "payment.replacement.inspect",
+    "payment.replacement.create",
+    "payment.replacement.duplicate-review.preview",
+    "payment.replacement.duplicate-review.execute",
+    "payment.identity-decision.preview",
+    "payment.identity-decision.execute",
+    "payment.evidence-recovery.preview",
+    "payment.evidence-recovery.execute",
     "payment.post",
     "payment.reverse",
     "payment.reverse-with-accrual.preview",
@@ -59,6 +67,7 @@
     "payment.restore.evidence.finalize",
     "payment.restore.preview",
     "payment.restore.execute",
+    "payment.restore.cancel",
     "payment.restore.schedule-backfill",
     "loan.preview",
     "loan.cancel.preview",
@@ -79,6 +88,7 @@
     "loan.contract.get",
     "loan.inspect-context",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.payment-history.list",
     "payment.match-context",
     "loan.disbursement.draft",
@@ -116,6 +126,7 @@
     "intermediary.disbursement.reverse",
     "intermediary.collection.list",
     "intermediary.collection.create",
+    "intermediary.collection.cancel",
     "intermediary.remittance.get",
     "intermediary.remittance.create",
     "intermediary.remittance.allocations.save",
@@ -138,6 +149,7 @@
     "funding-allocation.list",
     "system.error-diagnostic.get",
     "system.error-diagnostic.list",
-    "workflow.resolve"
+    "workflow.resolve",
+    "tool.catalog.search"
   ]
 }

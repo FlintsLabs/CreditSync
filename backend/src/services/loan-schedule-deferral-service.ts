@@ -16,7 +16,7 @@ export function getReplacementScheduleDate(scheduleTailDate: string) {
 }
 
 export function canDeferSchedule(row: Pick<typeof loanSchedules.$inferSelect, "paidTotal" | "remainingDue" | "status">) {
-    return row.status !== "deferred"
+    return (row.status === "pending" || row.status === "overdue")
         && new FinancialDecimal(row.paidTotal).isZero()
         && new FinancialDecimal(row.remainingDue).greaterThan(0);
 }
@@ -60,7 +60,54 @@ async function accessibleLoan(ctx: CommandContext, publicId: string, executor: t
     return loan;
 }
 
-function presentDeferral(loan: typeof loans.$inferSelect, source: typeof loanSchedules.$inferSelect, replacement: typeof loanSchedules.$inferSelect, auditPublicId: string | null, correlationId: string) {
+/** Authoritative read-only review data. This is not a persisted preview; execution rechecks under locks. */
+export async function inspectLoanScheduleDeferral(ctx: CommandContext, loanPublicId: string, schedulePublicId: string) {
+    let loan: Awaited<ReturnType<typeof accessibleLoan>>;
+    try {
+        loan = await accessibleLoan(ctx, loanPublicId);
+    } catch (error) {
+        if (error instanceof DomainError && (error.code === "LOAN_NOT_FOUND" || error.code === "ACTOR_NOT_FOUND")) {
+            return { eligible: false as const, blockedReason: "LOAN_UNAVAILABLE" as const };
+        }
+        throw error;
+    }
+    if (loan.status !== "active" || loan.repaymentType === "floating") {
+        return { eligible: false as const, blockedReason: loan.repaymentType === "floating" ? "FLOATING_LOAN" as const : "LOAN_NOT_ACTIVE" as const };
+    }
+    const source = await db.query.loanSchedules.findFirst({
+        where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id), eq(loanSchedules.publicId, schedulePublicId)),
+    });
+    if (!source) return { eligible: false as const, blockedReason: "SCHEDULE_UNAVAILABLE" as const };
+    if (!canDeferSchedule(source)) return { eligible: false as const, blockedReason: "SCHEDULE_NOT_FULLY_UNPAID" as const };
+    const tail = await db.query.loanSchedules.findFirst({
+        where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id)),
+        orderBy: [desc(loanSchedules.dueDate), desc(loanSchedules.installmentNo)],
+    });
+    if (!tail) return { eligible: false as const, blockedReason: "SCHEDULE_UNAVAILABLE" as const };
+    const installmentTail = await db.query.loanSchedules.findFirst({
+        where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id)),
+        orderBy: [desc(loanSchedules.installmentNo)],
+    });
+    if (!installmentTail) return { eligible: false as const, blockedReason: "SCHEDULE_UNAVAILABLE" as const };
+    return {
+        eligible: true as const,
+        loanPublicId: loan.publicId,
+        sourceSchedulePublicId: source.publicId,
+        sourceStatus: source.status,
+        sourceInstallmentNo: source.installmentNo,
+        sourceDueDate: source.dueDate,
+        replacementInstallmentNo: installmentTail.installmentNo + 1,
+        replacementDueDate: getReplacementScheduleDate(tail.dueDate),
+        scheduledPrincipal: serializeMoney(source.scheduledPrincipal),
+        scheduledInterest: serializeMoney(source.scheduledInterest),
+        scheduledFee: serializeMoney(source.scheduledFee),
+        scheduledTotal: serializeMoney(source.scheduledTotal),
+        paidTotal: serializeMoney(source.paidTotal),
+        remainingDue: serializeMoney(source.remainingDue),
+    };
+}
+
+function presentDeferral(loan: typeof loans.$inferSelect, source: typeof loanSchedules.$inferSelect, replacement: typeof loanSchedules.$inferSelect, auditPublicId: string, correlationId: string) {
     return {
         loanPublicId: loan.publicId,
         sourceSchedulePublicId: source.publicId,
@@ -82,16 +129,14 @@ export async function deferLoanSchedule(ctx: CommandContext, loanPublicId: strin
     const idempotencyKey = ctx.idempotencyKey?.trim();
     if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Schedule deferrals require a non-blank Idempotency-Key", 400);
 
-    const accessible = await accessibleLoan(ctx, loanPublicId);
-    if (accessible.status !== "active" || accessible.repaymentType === "floating") {
-        throw new DomainError("INVALID_LOAN_TERMS", "Only active scheduled loans can defer installments", 409);
-    }
-
     return db.transaction(async (tx) => {
+        // Serialize all requests sharing a tenant idempotency key before replay lookup.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:${idempotencyKey}`}, 0))`);
         const existing = await tx.query.loanScheduleDeferrals.findFirst({
             where: and(eq(loanScheduleDeferrals.tenantId, ctx.tenantId), eq(loanScheduleDeferrals.idempotencyKey, idempotencyKey)),
         });
         if (existing) {
+            const replayAccess = await accessibleLoan(ctx, loanPublicId, tx);
             const [currentLoan, source, replacement, audit] = await Promise.all([
                 tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, existing.loanId)) }),
                 tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, existing.sourceScheduleId)) }),
@@ -99,10 +144,16 @@ export async function deferLoanSchedule(ctx: CommandContext, loanPublicId: strin
                 tx.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, ctx.tenantId), eq(auditLogs.entityId, existing.publicId), eq(auditLogs.action, "deferred")) }),
             ]);
             if (!currentLoan || !source || !replacement) throw new DomainError("IDEMPOTENCY_CONFLICT", "Deferral replay is missing its linked schedule rows", 409);
-            if (currentLoan.publicId !== loanPublicId || source.publicId !== schedulePublicId || existing.reason !== reason) {
+            if (!audit) throw new DomainError("IDEMPOTENCY_CONFLICT", "Deferral replay is missing its audit record", 409);
+            if (replayAccess.id !== existing.loanId || currentLoan.publicId !== loanPublicId || source.publicId !== schedulePublicId || existing.reason !== reason) {
                 throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for a different deferral", 409);
             }
-            return presentDeferral(currentLoan, source, replacement, audit?.publicId ?? null, ctx.correlationId);
+            return presentDeferral(currentLoan, source, replacement, audit.publicId, existing.correlationId);
+        }
+
+        const accessible = await accessibleLoan(ctx, loanPublicId, tx);
+        if (accessible.status !== "active" || accessible.repaymentType === "floating") {
+            throw new DomainError("INVALID_LOAN_TERMS", "Only active scheduled loans can defer installments", 409);
         }
 
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.id} FOR UPDATE`);

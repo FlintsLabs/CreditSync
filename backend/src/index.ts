@@ -54,6 +54,7 @@ const app = new Elysia()
     .use(createDefaultMcpHttpPlugin(process.env, {}, "loans", "/mcp/loans"))
     .use(createDefaultMcpHttpPlugin(process.env, {}, "disbursements", "/mcp/disbursements"))
     .use(createDefaultMcpHttpPlugin(process.env, {}, "admin", "/mcp/admin"))
+    .use(createDefaultMcpHttpPlugin(process.env, {}, "discovery", "/mcp/discovery"))
     .use(authPlugin)
     .use(authRoute)
     .use(webhookRoute) // Webhook has its own signature verification

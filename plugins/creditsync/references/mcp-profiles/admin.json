@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-d816cad8ed74b1d2",
   "profile": "admin",
-  "toolCount": 35,
+  "toolCount": 37,
   "tools": [
     "system.error-diagnostic.get",
     "system.error-diagnostic.list",
@@ -26,6 +26,7 @@
     "intermediary.remittance.evidence.finalize",
     "intermediary.remittance.post",
     "intermediary.collection.create",
+    "intermediary.collection.cancel",
     "funding-source.list",
     "funding-allocation.preview",
     "funding-allocation.create",
@@ -38,6 +39,7 @@
     "loan.commission.list",
     "loan.commission.calculate",
     "loan.commission.reverse",
-    "workflow.resolve"
+    "workflow.resolve",
+    "tool.catalog.search"
   ]
 }

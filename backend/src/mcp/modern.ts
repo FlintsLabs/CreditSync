@@ -7,6 +7,7 @@ import {
 import type { McpToolDefinition, McpToolName } from "./catalog-types";
 import { toolsForProfile } from "./tool-profiles";
 import { decodeCatalogCursor, encodeCatalogCursor, MCP_PAGE_SIZE } from "./catalog-pagination";
+import { MCP_SERVER_INSTRUCTIONS } from "./tool-guidance";
 
 export const MODERN_PROTOCOL_VERSION = "2026-07-28" as const;
 export const MODERN_CACHE_TTL_MS = 300_000;
@@ -32,7 +33,7 @@ export function createModernMcpHandler(input: CreateMcpHttpPluginInput, ctx: Com
     return createMcpHandler(() => {
         const server = new McpServer({ name: "creditsync", version: "1.0.0" }, {
             capabilities: { tools: {} },
-            instructions: "CreditSync private tenant-scoped financial workflow tools. Preview before posting financial changes.",
+            instructions: MCP_SERVER_INSTRUCTIONS,
         });
         for (const metadata of tools) {
             const name = metadata.name as McpToolName;

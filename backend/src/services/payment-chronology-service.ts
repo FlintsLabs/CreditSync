@@ -1,9 +1,11 @@
 import { sql } from "drizzle-orm";
 import type { DbExecutor } from "../db";
 import { DomainError } from "./domain-error";
+import { lockPaymentWorkflowTenant } from "./payment-workflow-locks";
 
 /** Shared borrower-first lock boundary. Always call before intake/loan locks. */
 export async function lockPaymentBorrowers(tx: DbExecutor, tenantId: string, ids: number[]) {
+    await lockPaymentWorkflowTenant({ tenantId }, tx);
     const sorted = [...new Set(ids)].sort((a, b) => a - b);
     if (sorted.length) await tx.execute(sql`SELECT id FROM borrowers WHERE tenant_id = ${tenantId} AND id IN (${sql.join(sorted.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
 }

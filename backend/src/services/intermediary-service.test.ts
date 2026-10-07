@@ -1,13 +1,50 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, financialEvidenceRequirements, intermediaries, intermediaryCollections, intermediaryRemittanceEvidence, intermediaryRemittances, loans, paymentIntakes, paymentMatchProposals, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, commandReceipts, financialEvidenceRequirements, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceEvidence, intermediaryRemittanceProposals, intermediaryRemittances, loans, paymentIntakes, paymentMatchProposals, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
-import { createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, finalizeIntermediaryRemittanceEvidence, manualApproveIntermediaryCollection, normalizeIntermediaryText, postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance, reverseIntermediaryRemittance, saveRemittanceAllocations, sortIntermediaryCollectionsChronologically } from "./intermediary-service";
+import { cancelIntermediaryCollection, createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, finalizeIntermediaryRemittanceEvidence, getIntermediaryCollectionCancellationCapability, manualApproveIntermediaryCollection, normalizeIntermediaryText, postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance, reverseIntermediaryRemittance, saveRemittanceAllocations, sortIntermediaryCollectionsChronologically } from "./intermediary-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
 describe("intermediary collection service", () => {
+    integrationTest("cancels a pending or draft-allocated collection with an immutable idempotent receipt", async () => {
+        await db.execute(sql`TRUNCATE TABLE audit_logs, command_receipts, intermediary_remittance_proposals,
+            intermediary_remittance_allocations, intermediary_remittances, intermediary_collections,
+            intermediaries, transactions, payment_intakes, loans, borrowers, users RESTART IDENTITY CASCADE`);
+        const actor = await db.insert(users).values({ tenantId: "tenant-collection-cancel", email: "collection-cancel@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Collection Cancel Borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "5000.00", interestRate: "0.00", repaymentType: "daily", installmentAmount: "100.00", totalInstallments: 24, outstandingPrincipal: "5000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const base: CommandContext = { tenantId: actor.tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: "req-collection-cancel", correlationId: "corr-collection-cancel" };
+        const intermediary = await createIntermediary(base, { name: "Collection Cancel Collector" });
+        const sep9 = await createIntermediaryCollection({ ...base, idempotencyKey: "collection-cancel-sep9" }, { intermediaryPublicId: intermediary.publicId, borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "100.00", borrowerPaidAt: "2026-09-09T08:48:00.000Z" });
+        const sep10 = await createIntermediaryCollection({ ...base, idempotencyKey: "collection-cancel-sep10" }, { intermediaryPublicId: intermediary.publicId, borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "100.00", borrowerPaidAt: "2026-09-10T08:42:00.000Z" });
+        const remittance = await createIntermediaryRemittance({ ...base, idempotencyKey: "collection-cancel-remittance" }, { intermediaryPublicId: intermediary.publicId, grossAmount: "100.00", receivedAt: "2026-09-09T08:48:00.000Z" });
+        await saveRemittanceAllocations(base, remittance.publicId, { collectionPublicIds: [sep9.publicId] });
+        const sep9State = await getIntermediaryCollectionCancellationCapability(base, sep9.publicId);
+        const sep10State = await getIntermediaryCollectionCancellationCapability(base, sep10.publicId);
+        expect(sep9State).toMatchObject({ allowed: true });
+        expect(sep10State).toMatchObject({ allowed: true });
+        await expect(cancelIntermediaryCollection({ ...base, idempotencyKey: "cancel-collection-stale" }, sep9.publicId, { expectedStateHash: "0".repeat(64), reason: "Stale confirmation" })).rejects.toMatchObject({ code: "INTERMEDIARY_COLLECTION_CANCEL_STALE" });
+        expect((await db.query.intermediaryCollections.findFirst({ where: eq(intermediaryCollections.publicId, sep9.publicId) }))?.status).toBe("allocated");
+
+        const sep9Cancelled = await cancelIntermediaryCollection({ ...base, idempotencyKey: "cancel-collection-sep9" }, sep9.publicId, { expectedStateHash: sep9State.stateHash, reason: "Duplicate intermediary intake; recreate as borrower payment" });
+        const sep10Cancelled = await cancelIntermediaryCollection({ ...base, idempotencyKey: "cancel-collection-sep10" }, sep10.publicId, { expectedStateHash: sep10State.stateHash, reason: "Duplicate intermediary intake; recreate as borrower payment" });
+
+        expect(sep9Cancelled).toMatchObject({ publicId: sep9.publicId, status: "reversed", reason: "Duplicate intermediary intake; recreate as borrower payment" });
+        expect(sep10Cancelled).toMatchObject({ publicId: sep10.publicId, status: "reversed" });
+        expect((await db.select().from(intermediaryCollections).orderBy(intermediaryCollections.borrowerPaidAt)).map((row) => row.status)).toEqual(["reversed", "reversed"]);
+        expect((await db.select().from(intermediaryRemittanceAllocations)).map((row) => row.releasedAt !== null)).toEqual([true]);
+        expect(await db.select().from(transactions)).toHaveLength(0);
+        expect((await db.select().from(intermediaryRemittances))[0]).toMatchObject({ status: "needs_review" });
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.entityType, "intermediary_collection"))).toHaveLength(4);
+        expect(await db.select().from(commandReceipts).where(eq(commandReceipts.operationType, "intermediary_collection_cancel"))).toHaveLength(2);
+
+        const replay = await cancelIntermediaryCollection({ ...base, idempotencyKey: "cancel-collection-sep9" }, sep9.publicId, { expectedStateHash: sep9State.stateHash, reason: "Duplicate intermediary intake; recreate as borrower payment" });
+        expect(replay).toEqual(sep9Cancelled);
+        await expect(cancelIntermediaryCollection({ ...base, idempotencyKey: "cancel-collection-sep9" }, sep9.publicId, { expectedStateHash: sep9State.stateHash, reason: "Different reason" })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    });
+
     test("normalizes names without changing meaningful Thai text", () => {
         expect(normalizeIntermediaryText("  พี่ ก้อย!! ")).toBe("พี่ ก้อย");
     });

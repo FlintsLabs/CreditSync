@@ -1,4 +1,4 @@
-import Decimal from "decimal.js";
+import { FinancialDecimal } from "./financial-decimal";
 
 export type FloatingIntegrityAccrual = {
     id: number;
@@ -33,29 +33,42 @@ export type FloatingAllocationIssue = {
     dueDate?: string;
 };
 
+/** Current obligations exclude compensated sources even when their reversal was
+ * recorded after the requested business date. Apply date cutoffs only after
+ * resolving the complete reversal lineage; the ledger remains append-only. */
+export function activeFloatingPaymentAllocations<T extends Pick<FloatingIntegrityAllocation, "id" | "entryType" | "reversedAllocationId">>(rows: T[]): T[] {
+    const reversals = new Map<number, number[]>();
+    for (const row of rows) if (row.reversedAllocationId !== null) reversals.set(row.reversedAllocationId, [...(reversals.get(row.reversedAllocationId) ?? []), row.id]);
+    const hasActiveEffect = (id: number): boolean => {
+        const children = reversals.get(id) ?? [];
+        if (!children.length) return true;
+        return children.some((child) => !hasActiveEffect(child));
+    };
+    return rows.filter((row) => row.entryType === "payment" && hasActiveEffect(row.id));
+}
+
 export function findFloatingAllocationIssues(input: {
     accruals: FloatingIntegrityAccrual[];
     allocations: FloatingIntegrityAllocation[];
 }): FloatingAllocationIssue[] {
     const issues: FloatingAllocationIssue[] = [];
     const accrualById = new Map(input.accruals.map((row) => [row.id, row]));
-    const reversedIds = new Set(input.allocations.filter((row) => row.reversedAllocationId !== null).map((row) => row.reversedAllocationId!));
-    const active = input.allocations.filter((row) => row.entryType === "payment" && !reversedIds.has(row.id))
+    const active = activeFloatingPaymentAllocations(input.allocations)
         .sort((left, right) => left.effectiveDate.localeCompare(right.effectiveDate) || left.id - right.id);
-    const totals = new Map<number, Decimal>();
+    const totals = new Map<number, InstanceType<typeof FinancialDecimal>>();
     for (const row of active) {
         if (row.interestAccrualId === null) continue;
         const accrual = accrualById.get(row.interestAccrualId);
-        const prior = totals.get(row.interestAccrualId) ?? new Decimal(0);
+        const prior = totals.get(row.interestAccrualId) ?? new FinancialDecimal(0);
         if (accrual && prior.gte(accrual.interestAmount)) {
-            issues.push({ code: "ALLOCATION_AFTER_ACCRUAL_FILLED", accrualPublicId: accrual.publicId, accrualDate: accrual.accrualDate, allocationPublicId: row.publicId, netAllocatedAmount: prior.plus(row.amount).toFixed(2), interestAmount: new Decimal(accrual.interestAmount).toFixed(2) });
+            issues.push({ code: "ALLOCATION_AFTER_ACCRUAL_FILLED", accrualPublicId: accrual.publicId, accrualDate: accrual.accrualDate, allocationPublicId: row.publicId, netAllocatedAmount: prior.plus(row.amount).toFixed(2), interestAmount: new FinancialDecimal(accrual.interestAmount).toFixed(2) });
         }
         totals.set(row.interestAccrualId, prior.plus(row.amount));
     }
     for (const accrual of input.accruals) {
-        const allocated = totals.get(accrual.id) ?? new Decimal(0);
-        if (allocated.gt(accrual.interestAmount)) issues.unshift({ code: "ACCRUAL_OVERALLOCATED", accrualPublicId: accrual.publicId, accrualDate: accrual.accrualDate, netAllocatedAmount: allocated.toFixed(2), interestAmount: new Decimal(accrual.interestAmount).toFixed(2) });
-        if (new Decimal(accrual.paidAmount).gt(accrual.interestAmount)) issues.push({ code: "ACCRUAL_PAID_OVER_LIMIT", accrualPublicId: accrual.publicId, accrualDate: accrual.accrualDate, paidAmount: new Decimal(accrual.paidAmount).toFixed(2), interestAmount: new Decimal(accrual.interestAmount).toFixed(2) });
+        const allocated = totals.get(accrual.id) ?? new FinancialDecimal(0);
+        if (allocated.gt(accrual.interestAmount)) issues.unshift({ code: "ACCRUAL_OVERALLOCATED", accrualPublicId: accrual.publicId, accrualDate: accrual.accrualDate, netAllocatedAmount: allocated.toFixed(2), interestAmount: new FinancialDecimal(accrual.interestAmount).toFixed(2) });
+        if (new FinancialDecimal(accrual.paidAmount).gt(accrual.interestAmount)) issues.push({ code: "ACCRUAL_PAID_OVER_LIMIT", accrualPublicId: accrual.publicId, accrualDate: accrual.accrualDate, paidAmount: new FinancialDecimal(accrual.paidAmount).toFixed(2), interestAmount: new FinancialDecimal(accrual.interestAmount).toFixed(2) });
         if (accrual.status === "reversed" && allocated.gt(0)) issues.push({ code: "REVERSED_ACCRUAL_TARGET", accrualPublicId: accrual.publicId, accrualDate: accrual.accrualDate, netAllocatedAmount: allocated.toFixed(2) });
     }
     return issues;

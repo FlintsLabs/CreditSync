@@ -1,5 +1,72 @@
 # CreditSync Plugin Changelog
 
+## v12.0.0 - 2026-10-06
+
+### Added
+
+- Added the `discovery` profile, metadata-only catalog search guidance, deterministic discovery cases, and local sanitized trace grading.
+- Regenerated the frozen 147-tool MCP contract, all seven profile snapshots, and bounded tool guide from the serving backend; retained all 11 skills and advanced breaking-contract compatibility to plugin 13.0.0.
+- Added explicit installment deferral guidance and distinguished it from first-date correction, renewal, replacement, settlement, payment evidence, and payout evidence.
+
+### Changed
+
+- Clarified host-native deferred search/dynamic allowlist limits, profile connection selection, and refresh/reconnect after catalog rollout.
+
+## v11.0.0 - 2026-09-25
+
+### Changed
+
+- Bumped the frozen contract for identity-decision previews to include bounded participant amount, payer, and timestamp discrepancy snapshots; existing clients must refresh to the new output schema.
+
+## v10.9.0 - 2026-09-23
+
+### Added
+
+- Added participant-scoped identity decision and cancelled-evidence recovery tool contracts, including explicit confirmation, requirement reinterpretation, ownership checks, and replay-safe recovery guidance.
+
+## v10.8.0 - 2026-09-23
+
+### Added
+
+- Added explicit, bounded canonical-evidence selection for the cancelled duplicate review workflow. Selection is persisted per candidate, rechecked at execute/authorization, and keeps legacy review hashes unchanged.
+
+## v10.7.0 - 2026-09-22
+
+### Added
+
+- Added tenant-scoped, append-only duplicate-review preview/execute guidance for exact cancelled payment duplicates, including expiry, evidence/dependency rechecks, and safe blocker reporting.
+
+## v10.6.0 - 2026-09-22
+
+### Added
+
+- Added cancelled-payment replacement inspection and audited draft creation with immutable evidence lineage, ordinary preview/post handoff, resolver safety guidance, and executable evaluation coverage.
+
+### Changed
+
+- Regenerated the frozen MCP contract and profile snapshots from the merged backend tool inventory.
+
+## v10.5.0 - 2026-09-21
+
+### Added
+
+- Added inspected cancellation for exact eligible unposted intermediary collections, with current state hashes, stable idempotency keys, audited reversal history, and draft-remittance invalidation.
+
+### Changed
+
+- Regenerated the frozen MCP contract and profile snapshots for intermediary collection cancellation.
+
+## v10.4.0 - 2026-09-21
+
+### Added
+
+- Added the audited `intake.get` → explicit confirmation → `payment.restore.cancel` → `intake.get` workflow for cancelling an unposted restore draft without changing the reversed source, evidence, transactions, or balances.
+- Documented cancelled restore history, retry keys, and the distinction between cancellation and refund.
+
+### Changed
+
+- Regenerated the frozen MCP contract and profile snapshots for the restore-cancellation tool.
+
 ## v10.3.0 - 2026-09-14
 
 ### Added
@@ -322,3 +389,6 @@
 - Corrected token-byte hashing, metadata-preserving MinIO recovery, and MCP-only rollback guidance.
 - Corrected renewal-reversal provenance: the borrower UUID is retained before execution rather than read from `renewal.execute`, portfolio inspection is limited to exposed loan states, and `renewal.reverse` is the authoritative atomic blocker check.
 - Aligned the blocked-reversal eval and instructions with the backend's sanitized `RENEWAL_REVERSE_BLOCKED` contract: backend message plus aggregate `downstreamEntryCount`, with no invented blocker records.
+# v10.4.0 - 2026-09-22
+
+- Added cancelled-payment replacement inspection and audited draft creation with inherited evidence lineage.

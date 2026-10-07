@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-d816cad8ed74b1d2",
   "profile": "disbursements",
-  "toolCount": 40,
+  "toolCount": 42,
   "tools": [
     "borrower.resolve-and-portfolio",
     "loan.inspect-context",
@@ -33,6 +33,7 @@
     "intermediary.disbursement.reverse",
     "intermediary.collection.list",
     "intermediary.collection.create",
+    "intermediary.collection.cancel",
     "intermediary.remittance.get",
     "intermediary.remittance.create",
     "intermediary.remittance.allocations.save",
@@ -43,6 +44,7 @@
     "funding-source.list",
     "funding-allocation.preview",
     "funding-allocation.list",
-    "workflow.resolve"
+    "workflow.resolve",
+    "tool.catalog.search"
   ]
 }

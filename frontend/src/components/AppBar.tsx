@@ -35,9 +35,10 @@ export type AppBarProps = {
 export type UserAccountMenuProps = {
     buttonClassName?: string;
     dropdownAlign?: "start" | "end";
+    dropdownClassName?: string;
 };
 
-export function UserAccountMenu({ buttonClassName, dropdownAlign = "end" }: UserAccountMenuProps = {}) {
+export function UserAccountMenu({ buttonClassName, dropdownAlign = "end", dropdownClassName }: UserAccountMenuProps = {}) {
     const { t } = useTranslation();
     const navigate = useNavigate();
     const user = getStoredUser();
@@ -58,7 +59,7 @@ export function UserAccountMenu({ buttonClassName, dropdownAlign = "end" }: User
                 </Avatar>
             </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-56" align={dropdownAlign} forceMount>
+        <DropdownMenuContent className={`w-56 ${dropdownClassName ?? ""}`} align={dropdownAlign} forceMount>
             <DropdownMenuLabel className="font-normal">
                 <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium leading-none">{user?.name}</p>

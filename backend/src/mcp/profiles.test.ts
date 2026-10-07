@@ -79,6 +79,27 @@ function modernRequest(method: string, params: Record<string, unknown>) {
 }
 
 describe("MCP catalog and profiles", () => {
+    test("registers profile-aware catalog search as closed-world read-only metadata", () => {
+        const definition = advertisedMcpToolMetadata().find((tool) => tool.name === "tool.catalog.search")!;
+        expect(definition.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+        expect(definition.policy).toEqual({ kind: "read_only", requiresAudit: false });
+        for (const profile of ["full", "core-read", "payments", "loans", "disbursements", "admin", "discovery"] as const) {
+            expect(toolNamesForProfile(profile)).toContain("tool.catalog.search");
+        }
+        expect(MCP_TOOL_NAMES).toHaveLength(147);
+        expect(toolNamesForProfile("core-read")).toHaveLength(38);
+        expect(Object.fromEntries(Object.entries(TOOL_PROFILES).map(([profile, names]) => [profile, names.length]))).toEqual({ full: 147, "core-read": 38, payments: 68, loans: 47, disbursements: 42, admin: 37, discovery: 8 });
+        expect(toolNamesForProfile("core-read")).not.toContain("loan.cancel.preview");
+        const cancellationPreview = catalogByName.get("loan.cancel.preview")!;
+        expect(cancellationPreview.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false });
+        expect(cancellationPreview.policy).toEqual({ kind: "mutating", requiresAudit: false });
+        expect(toolNamesForProfile("discovery")).toEqual([
+            "tool.catalog.search", "workflow.resolve", "borrower.search", "borrower.resolve-and-portfolio",
+            "loan.inspect-context", "payment.match-context", "intake.get", "funding-source.list",
+        ]);
+        expect(toolNamesForProfile("discovery")).toHaveLength(8);
+        expect(toolsForProfile("discovery", catalog).every((tool) => tool.annotations.readOnlyHint && tool.policy.kind === "read_only")).toBe(true);
+    });
     test("has one canonical definition for every current tool", () => {
         expect(MCP_TOOL_NAMES).toEqual(expect.arrayContaining([
             "loan.disbursement.evidence.import-chatgpt-file", "borrower.resolve-and-portfolio",
@@ -114,7 +135,11 @@ describe("MCP catalog and profiles", () => {
         has("disbursements", "loan.disbursement.list", "loan.disbursement.draft", "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize", "loan.disbursement.post", "loan.disbursement.reverse", "intermediary.disbursement.preview", "intermediary.disbursement.post");
         has("admin", "system.error-diagnostic.get", "system.error-diagnostic.list", "funding-source.list", "funding-allocation.list", "loan.commission.list", "loan.commission.calculate");
         has("core-read", "borrower.search", "borrower.portfolio", "intake.get", "loan.contract.get", "loan.payment-history.list", "loan.disbursement.list", "system.error-diagnostic.list");
-        has("disbursements", "intermediary.collection.list", "intermediary.collection.create", "intermediary.remittance.get", "intermediary.remittance.create", "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare", "intermediary.remittance.evidence.finalize", "intermediary.remittance.post");
+        has("disbursements", "intermediary.collection.list", "intermediary.collection.create", "intermediary.collection.cancel", "intermediary.remittance.get", "intermediary.remittance.create", "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare", "intermediary.remittance.evidence.finalize", "intermediary.remittance.post");
+        has("loans", "loan.schedule.defer");
+        for (const profile of ["core-read", "disbursements", "admin"] as const) {
+            expect(toolNamesForProfile(profile)).not.toContain("loan.schedule.defer");
+        }
     });
 
     test("replays valid representative workflows through all profiles, stops after evidence failure, and denies out-of-profile calls", async () => {
@@ -127,7 +152,7 @@ describe("MCP catalog and profiles", () => {
                 return outputFixture(name);
             }) satisfies McpToolHandler])) as Record<string, McpToolHandler>;
             const app = new Elysia();
-            for (const profile of ["core-read", "payments", "loans", "disbursements", "admin"] as const) {
+            for (const profile of ["core-read", "payments", "loans", "disbursements", "admin", "discovery"] as const) {
                 app.use(createMcpHttpPlugin({
                     config: { tokenHashes: [tokenHash], allowedHosts: ["profile.test"], tenantId: "profile-test-tenant", actorEmail: "profile@example.test", rateLimitMax: 100, rateLimitWindowSeconds: 60, allowedOrigins: [] },
                     profile, handlers,
@@ -168,12 +193,12 @@ describe("MCP catalog and profiles", () => {
         await replay({ app, calls }, "core-read", [["borrower.search", { query: "synthetic" }], ["borrower.portfolio", { borrowerPublicId: PROFILE_TEST_UUID }], ["loan.contract.get", { loanPublicId: PROFILE_TEST_UUID }]]);
         await replay({ app, calls }, "payments", [["intake.get", { paymentIntakePublicId: PROFILE_TEST_UUID }], ["payment.match-context", { paymentIntakePublicId: PROFILE_TEST_UUID }], ["payment.preview", { paymentIntakePublicId: PROFILE_TEST_UUID }], ["payment.post", { paymentIntakePublicId: PROFILE_TEST_UUID, proposalPublicId: PROFILE_TEST_UUID }]]);
         await replay({ app, calls }, "loans", [["loan.contract.get", { loanPublicId: PROFILE_TEST_UUID }], ["loan.disbursement.draft", { loanPublicId: PROFILE_TEST_UUID, grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "bank_transfer", disbursedAt: "2026-09-13T00:00:00.000Z" }], ["loan.disbursement.evidence.prepare", { disbursementPublicId: PROFILE_TEST_UUID, mimeType: "image/png", size: 100, sha256: "a".repeat(64) }], ["loan.disbursement.evidence.finalize", { disbursementPublicId: PROFILE_TEST_UUID, evidencePublicId: PROFILE_TEST_UUID }], ["loan.disbursement.post", { disbursementPublicId: PROFILE_TEST_UUID, idempotencyKey: "profile-disbursement-post-1" }]]);
-        await replay({ app, calls }, "disbursements", [["intermediary.profile.get", { intermediaryPublicId: PROFILE_TEST_UUID }], ["intermediary.collection.list", { intermediaryPublicId: PROFILE_TEST_UUID }], ["intermediary.remittance.create", { intermediaryPublicId: PROFILE_TEST_UUID, grossAmount: "100.00", receivedAt: "2026-09-13T00:00:00.000Z", idempotencyKey: "profile-remittance-create-1" }], ["intermediary.remittance.get", { remittancePublicId: PROFILE_TEST_UUID }], ["intermediary.remittance.allocations.save", { remittancePublicId: PROFILE_TEST_UUID, collectionPublicIds: [PROFILE_TEST_UUID] }], ["intermediary.remittance.preview", { remittancePublicId: PROFILE_TEST_UUID }], ["intermediary.remittance.post", { remittancePublicId: PROFILE_TEST_UUID, proposalPublicId: PROFILE_TEST_UUID, confirmed: true, idempotencyKey: "profile-remittance-post-1" }]]);
+        await replay({ app, calls }, "disbursements", [["intermediary.profile.get", { intermediaryPublicId: PROFILE_TEST_UUID }], ["intermediary.collection.list", { intermediaryPublicId: PROFILE_TEST_UUID }], ["intermediary.collection.cancel", { collectionPublicId: PROFILE_TEST_UUID, expectedStateHash: "a".repeat(64), reason: "synthetic test", idempotencyKey: "profile-collection-cancel-1" }], ["intermediary.remittance.create", { intermediaryPublicId: PROFILE_TEST_UUID, grossAmount: "100.00", receivedAt: "2026-09-13T00:00:00.000Z", idempotencyKey: "profile-remittance-create-1" }], ["intermediary.remittance.get", { remittancePublicId: PROFILE_TEST_UUID }], ["intermediary.remittance.allocations.save", { remittancePublicId: PROFILE_TEST_UUID, collectionPublicIds: [PROFILE_TEST_UUID] }], ["intermediary.remittance.preview", { remittancePublicId: PROFILE_TEST_UUID }], ["intermediary.remittance.post", { remittancePublicId: PROFILE_TEST_UUID, proposalPublicId: PROFILE_TEST_UUID, confirmed: true, idempotencyKey: "profile-remittance-post-1" }]]);
         await replay({ app, calls }, "admin", [["funding-source.list", { status: "active" }], ["funding-allocation.preview", { allocatedAmount: "100.00", allocationDate: "2026-09-13", loanPublicId: PROFILE_TEST_UUID, bankProfilePublicId: PROFILE_TEST_UUID }], ["funding-allocation.list", { loanPublicId: PROFILE_TEST_UUID }]]);
         expect(calls).toEqual([
             "borrower.search", "borrower.portfolio", "loan.contract.get", "intake.get", "payment.match-context", "payment.preview", "payment.post",
             "loan.contract.get", "loan.disbursement.draft", "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize", "loan.disbursement.post",
-            "intermediary.profile.get", "intermediary.collection.list", "intermediary.remittance.create", "intermediary.remittance.get", "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.post",
+            "intermediary.profile.get", "intermediary.collection.list", "intermediary.collection.cancel", "intermediary.remittance.create", "intermediary.remittance.get", "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.post",
             "funding-source.list", "funding-allocation.preview", "funding-allocation.list",
         ]);
 
@@ -190,6 +215,14 @@ describe("MCP catalog and profiles", () => {
         expect(denied.status).toBe(200);
         expect((await denied.json() as Record<string, any>).error?.code).toBe(-32602);
         expect(calls.filter((name) => name === "payment.post")).toHaveLength(1);
+        const beforeDiscoveryDenial = calls.length;
+        const deniedDiscovery = await app.handle(new Request("http://profile.test/mcp/discovery", {
+            method: "POST", headers: { host: "profile.test", authorization: `Bearer ${PROFILE_TEST_TOKEN}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "payment.post", arguments: { paymentIntakePublicId: PROFILE_TEST_UUID, proposalPublicId: PROFILE_TEST_UUID } } }),
+        }));
+        expect(deniedDiscovery.status).toBe(200);
+        expect((await deniedDiscovery.json() as Record<string, any>).error?.code).toBe(-32602);
+        expect(calls).toHaveLength(beforeDiscoveryDenial);
     });
 
     test("core-read cannot expose mutation or open-world imports", () => {

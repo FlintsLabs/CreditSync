@@ -697,6 +697,35 @@ describe("loan application service", () => {
         }]);
     });
 
+    integrationTest("returns web accrual eligibility fields without changing the MCP loan shape", async () => {
+        const actor = await seedUser("tenant-accrual-actions", "accrual-actions@example.test", "collector");
+        const ctx = context(actor.tenantId, actor.id, "accrual-actions-create");
+        const borrower = await createBorrower(ctx, { name: "Accrual Actions Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "3000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+            startDate: "2026-10-05",
+            floatingInterestPolicy: {
+                periodUnit: "day", periodLength: 1, rateMode: "percent", rate: "1.5000",
+                advanceInterestPeriods: 1, advanceInterestRefundPolicy: "non_refundable",
+            },
+        });
+        await activateLoan(ctx, draft.publicId);
+        const asOf = new Date("2026-10-07T12:00:00+07:00");
+        const web = await getLoanApplication(ctx, draft.publicId, { projectedAccrualsAsOf: asOf });
+        expect(web).toMatchObject({ status: "active", repaymentType: "floating", floatingAccrualCycle: "daily", interestPeriodUnit: "day" });
+        expect(web.accruals.filter(row => row.remainingAmount === "45.00")).toHaveLength(2);
+        const mcp = await getLoanApplication(ctx, draft.publicId);
+        expect("floatingAccrualCycle" in mcp).toBe(false);
+        expect("interestPeriodUnit" in mcp).toBe(false);
+        const app = new Elysia().use(loansRoute);
+        const response = await app.handle(new Request(`http://localhost/loans/${draft.publicId}`, {
+            headers: { authorization: `Bearer ${await authToken(actor)}` },
+        }));
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ floatingAccrualCycle: "daily", interestPeriodUnit: "day" });
+    });
+
     // Break caught: normalizing the legacy daily adapter into generalized
     // columns makes start-next-day loans accrue on their anchor date.
     integrationTest("preserves the legacy start-next-day boundary in projection and materialization", async () => {

@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-d816cad8ed74b1d2",
   "profile": "payments",
-  "toolCount": 58,
+  "toolCount": 68,
   "tools": [
     "borrower.resolve-and-portfolio",
     "loan.inspect-context",
@@ -20,6 +20,14 @@
     "payment.preview",
     "payment.post",
     "payment.cancel",
+    "payment.replacement.inspect",
+    "payment.replacement.create",
+    "payment.replacement.duplicate-review.preview",
+    "payment.replacement.duplicate-review.execute",
+    "payment.identity-decision.preview",
+    "payment.identity-decision.execute",
+    "payment.evidence-recovery.preview",
+    "payment.evidence-recovery.execute",
     "payment.reverse",
     "payment.reverse-with-accrual.preview",
     "payment.reverse-with-accrual.execute",
@@ -57,10 +65,12 @@
     "payment.restore.evidence.finalize",
     "payment.restore.preview",
     "payment.restore.execute",
+    "payment.restore.cancel",
     "payment.restore.schedule-backfill",
     "payment.intermediary-attribution.list",
     "payment.intermediary-attribution.create",
     "payment.intermediary-attribution.reverse",
-    "workflow.resolve"
+    "workflow.resolve",
+    "tool.catalog.search"
   ]
 }

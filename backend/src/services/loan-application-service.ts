@@ -24,6 +24,8 @@ import {
 } from "../lib/floating-interest-policy";
 import type { CommandContext } from "./command-context";
 import { getLoanReadPaymentHealth } from "./loan-payment-health-service";
+import { floatingInterestBalances } from "./floating-interest-service";
+import { getLoanAccrualReceiptHistory } from "./loan-accrual-history-service";
 import { assertLoanFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { DomainError } from "./domain-error";
 import {
@@ -532,11 +534,19 @@ export function previewLoan(input: PublicLoanCalculationParams) {
 
 export interface LoanApplicationReadOptions {
     includeAccruals?: boolean;
+    /** Web-only projection; MCP accrual IDs must continue to reference persisted records. */
+    projectedAccrualsAsOf?: Date;
 }
 
 export async function getLoanApplication(ctx: CommandContext, publicId: string, options: LoanApplicationReadOptions = {}) {
     const loan = await accessibleLoan(ctx, publicId);
     const base = await presentLoan(loan);
+    // The Web action gate needs the same stored terms that posting validates.
+    // Keep these fields out of the frozen MCP contract read.
+    const webAccrualTerms = options.projectedAccrualsAsOf ? {
+        floatingAccrualCycle: loan.floatingAccrualCycle,
+        interestPeriodUnit: loan.interestPeriodUnit,
+    } : {};
     const [inbound, outbound, replacementLineages] = await Promise.all([
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.newLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.oldLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
@@ -555,7 +565,8 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string, 
             accrualRows = [];
         }
     }
-    const accruals = accrualRows.map((row) => ({
+    const presentAccrual = (row: Pick<typeof loanInterestAccruals.$inferSelect,
+        "publicId" | "accrualDate" | "periodStartDate" | "periodEndDate" | "periodUnit" | "periodDayIndex" | "interestAmount" | "paidAmount" | "status">) => ({
         publicId: row.publicId,
         accrualDate: row.accrualDate,
         periodStartDate: row.periodStartDate,
@@ -566,9 +577,26 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string, 
         paidAmount: serializeMoney(row.paidAmount),
         remainingAmount: serializeMoney(FinancialDecimal.max(new FinancialDecimal(row.interestAmount).minus(row.paidAmount), 0)),
         status: row.status,
-    }));
+    });
+    let accruals: Array<ReturnType<typeof presentAccrual> & { receiptHistory?: Awaited<ReturnType<typeof getLoanAccrualReceiptHistory>>[number]["receipts"] }> = accrualRows.map(presentAccrual);
+    if (options.includeAccruals !== false && options.projectedAccrualsAsOf
+        && loan.status === "active" && loan.repaymentType === "floating"
+        && loan.firstDayTreatment && loan.interestStartDate && loan.dailyInterestMode && loan.dailyInterestRate) {
+        const balances = await floatingInterestBalances(db, loan, options.projectedAccrualsAsOf, ctx);
+        const byPublicId = new Map(accruals.map((row) => [row.publicId, row]));
+        for (const row of balances.rows) byPublicId.set(row.publicId, presentAccrual(row));
+        // Keep persisted reversal history and prepaid future rows alongside the current projection.
+        accruals = [...byPublicId.values()].sort((left, right) => left.accrualDate.localeCompare(right.accrualDate)
+            || left.publicId.localeCompare(right.publicId));
+        base.outstandingInterest = balances.dueInterest.toFixed(2);
+    }
+    if (options.projectedAccrualsAsOf && loan.repaymentType === "floating") {
+        const histories = await getLoanAccrualReceiptHistory(ctx, loan.publicId);
+        const historyByDate = new Map(histories.map((item) => [item.accrualDate, item.receipts]));
+        accruals = accruals.map((row) => ({ ...row, receiptHistory: historyByDate.get(row.accrualDate) ?? [] }));
+    }
     const replacementLineage = replacementLineages.get(loan.id) ?? null;
-    if (!inbound && !outbound) return { ...base, replacementLineage, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [], accruals };
+    if (!inbound && !outbound) return { ...base, ...webAccrualTerms, replacementLineage, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [], accruals };
     const [inboundOldLoan, outboundNewLoan, opening, waivers] = await Promise.all([
         inbound ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, inbound.oldLoanId)) }) : null,
         outbound?.newLoanId ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, outbound.newLoanId)) }) : null,
@@ -581,6 +609,7 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string, 
     const primary = outbound ?? inbound!;
     return {
         ...base,
+        ...webAccrualTerms,
         replacementLineage,
         restructureLineage: {
             restructurePublicId: primary.publicId,

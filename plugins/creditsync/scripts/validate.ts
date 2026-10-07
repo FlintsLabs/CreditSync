@@ -2,14 +2,17 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { MCP_TOOL_NAMES } from "../../../backend/src/mcp/server";
+import { TOOL_GUIDANCE } from "../../../backend/src/mcp/tool-guidance";
 import type { FrozenMcpContract } from "../../../backend/src/mcp/contract-snapshot";
 import { EVAL_SCENARIO_IDS, runEvalScenario } from "../evals/harness";
 import { canonicalContractJson, captureAdvertisedMcpContract } from "./mcp-contract";
+import { generateToolGuide } from "./tool-guide";
+import { profileSnapshots } from "./mcp-profiles";
 
 const pluginRoot = resolve(import.meta.dir, "..");
 const repositoryRoot = resolve(pluginRoot, "../..");
 const expectedSkills = ["creditsync", "manage-borrowers", "reconcile-payments", "reconcile-intermediary-remittances", "manage-loans", "manage-floating-interest-rates", "settle-floating-loans", "manage-disbursements", "manage-intermediated-disbursements", "renew-daily-loan", "restructure-loan"];
-const expectedReferences = ["matching-policy.md", "financial-rules.md", "error-recovery.md", "mcp-tool-contract.json"];
+const expectedReferences = ["matching-policy.md", "financial-rules.md", "error-recovery.md", "mcp-tool-contract.json", "tool-guide.md"];
 const forbiddenEntries = [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"];
 export const PRIVATE_APP_ID_PLACEHOLDER = "plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION";
 
@@ -80,7 +83,7 @@ export async function validatePlugin() {
     const errors: string[] = [];
     const manifest = await parseJson(resolve(pluginRoot, ".codex-plugin/plugin.json"));
     if (manifest.name !== "creditsync") errors.push("manifest name must be creditsync");
-    if (manifest.version !== "10.3.0") errors.push("manifest version must be 10.3.0");
+    if (manifest.version !== "12.0.0") errors.push("manifest version must be 12.0.0");
     if (manifest.skills !== "./skills/") errors.push("manifest skills path must be ./skills/");
     if (manifest.apps !== "./.app.json") errors.push("manifest apps path must be ./.app.json");
     for (const field of ["mcpServers", "hooks", "ui", "oauth"]) {
@@ -126,8 +129,11 @@ export async function validatePlugin() {
             "loan.commission-participant.list", "loan.commission.preview", "loan.commission.reverse",
             "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
             "payment.intermediary-attribution.reverse",
-            "payment.restore.create", "payment.restore.preview", "payment.restore.execute",
+            "payment.restore.create", "payment.restore.preview", "payment.restore.execute", "payment.restore.cancel",
             "payment.restore.evidence.prepare", "payment.restore.evidence.finalize",
+            "payment.replacement.inspect", "payment.replacement.create",
+            "payment.identity-decision.preview", "payment.identity-decision.execute",
+            "payment.evidence-recovery.preview", "payment.evidence-recovery.execute",
             "payment.reconcile.preflight",
             "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute",
             "payment.allocation-correction.preview", "payment.allocation-correction.execute",
@@ -149,6 +155,18 @@ export async function validatePlugin() {
     const contract = await parseJson(resolve(pluginRoot, "references/mcp-tool-contract.json")) as unknown as FrozenMcpContract;
     if (contract.schemaVersion !== "1.0") errors.push("tool contract schemaVersion must be 1.0");
     if (!equalStrings(contract.tools?.map((tool) => tool.name), MCP_TOOL_NAMES)) errors.push("plugin tool list differs from backend MCP tool list/order");
+    const guidePath = resolve(pluginRoot, "references/tool-guide.md");
+    if (existsSync(guidePath) && await readFile(guidePath, "utf8") !== generateToolGuide()) errors.push("generated tool guide is stale or does not exactly cover the serving catalog and guidance registry");
+    const actualProfiles = profileSnapshots();
+    for (const expected of actualProfiles) {
+        const path = resolve(pluginRoot, `references/mcp-profiles/${expected.profile}.json`);
+        if (!existsSync(path) || JSON.stringify(await parseJson(path)) !== JSON.stringify(expected)) errors.push(`profile snapshot ${expected.profile} is stale or differs from the serving catalog`);
+        for (const name of expected.tools) if (!TOOL_GUIDANCE[name as keyof typeof TOOL_GUIDANCE]) errors.push(`profile ${expected.profile} tool ${name} has no guidance`);
+    }
+    const index = await parseJson(resolve(pluginRoot, "references/mcp-profiles/index.json"));
+    const expectedIndex = { schemaVersion: "1.0", catalogVersion: actualProfiles[0]?.catalogVersion, profiles: actualProfiles.map(({ profile, toolCount }) => ({ profile, toolCount })) };
+    if (JSON.stringify(index) !== JSON.stringify(expectedIndex)) errors.push("profile index counts/catalog version are stale");
+
     const advertised = await captureAdvertisedMcpContract();
     if (canonicalContractJson(contract) !== canonicalContractJson(advertised)) {
         errors.push("committed MCP contract differs from an authenticated local tools/list response; regenerate with scripts/mcp-contract.ts --write");
@@ -232,5 +250,5 @@ if (import.meta.main) {
     }
     const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
     const registration = classifyPrivateAppId(app.apps?.creditsync?.id);
-    console.log(`CreditSync plugin validation passed (10.3.0, 11 skills, ${MCP_TOOL_NAMES.length} tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
+    console.log(`CreditSync plugin validation passed (12.0.0, ${expectedSkills.length} skills, ${MCP_TOOL_NAMES.length} tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
 }

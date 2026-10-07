@@ -27,7 +27,7 @@ const pluginInput = {
     findAuditPublicIds: async () => ["0198c481-3e2b-7000-8000-000000000001"],
     logger: () => undefined,
 };
-const profiles = ["full", "core-read", "payments", "loans", "disbursements", "admin"] as const satisfies readonly ToolProfile[];
+const profiles = ["full", "core-read", "payments", "loans", "disbursements", "admin", "discovery"] as const satisfies readonly ToolProfile[];
 const app = new Elysia().use(createMcpHttpPlugin(pluginInput));
 for (const profile of profiles.slice(1)) app.use(createMcpHttpPlugin({ ...pluginInput, profile }, `/mcp/${profile}`));
 

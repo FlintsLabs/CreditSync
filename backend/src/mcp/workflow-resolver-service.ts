@@ -1,10 +1,19 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentEvidence, paymentIntakes, users } from "../db/schema";
+import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import type { CommandContext } from "../services/command-context";
+import { getPaymentRestoreCancellationCapability } from "../services/payment-reconciliation-service";
 import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, type ResolverProfile } from "./workflow-resolver";
 import type { ToolProfile } from "./catalog-types";
+import { effectivePaymentEvidence } from "../services/payment-effective-evidence-service";
+import { countAuthoritativeEvidenceAttempts } from "../services/financial-evidence-requirement-service";
+import { assessPaymentReplacementDuplicates } from "../services/payment-duplicate-guard";
+import { inspectPaymentReplacement } from "../services/payment-replacement-service";
+import { classifyPaymentWorkflowBlocker } from "../services/payment-workflow-blockers";
+import { paymentDuplicateReviewMemberships } from "../db/schema";
+import { normalizeBorrowerText } from "../services/borrower-service";
+import { inspectLoanScheduleDeferral } from "../services/loan-schedule-deferral-service";
 
 type ResolverWireInput = Omit<ResolverInput, "profile"> & { profile?: never };
 
@@ -23,30 +32,44 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
     const intake = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.publicId, publicId)) });
     if (!intake || !(await actorCanRead(ctx, intake.ownerUserId))) return { targetAvailable: false };
     const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: and(eq(financialEvidenceRequirements.tenantId, ctx.tenantId), eq(financialEvidenceRequirements.paymentIntakeId, intake.id)) });
-    const [evidenceCounts, attemptCounts] = await Promise.all([
-        db.select({
-            total: sql<number>`count(${paymentEvidence.id})`,
-            ready: sql<number>`count(${paymentEvidence.id}) FILTER (WHERE ${paymentEvidence.status} = 'ready' AND ${paymentEvidence.finalizedAt} IS NOT NULL AND ${paymentEvidence.fileId} IS NOT NULL AND ${files.id} IS NOT NULL)`,
-            pending: sql<number>`count(${paymentEvidence.id}) FILTER (WHERE ${paymentEvidence.status} = 'pending')`,
-            rejected: sql<number>`count(${paymentEvidence.id}) FILTER (WHERE ${paymentEvidence.status} = 'rejected')`,
-        }).from(paymentEvidence)
-            .leftJoin(files, and(eq(files.tenantId, ctx.tenantId), eq(files.id, paymentEvidence.fileId)))
-            .where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intake.id))),
-        requirement ? db.select({ total: sql<number>`count(${financialEvidenceRequirementAttempts.id})` }).from(financialEvidenceRequirementAttempts)
-            .where(and(eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement.id))) : Promise.resolve([{ total: 0 }]),
+    const [effective, attemptCount] = await Promise.all([
+        effectivePaymentEvidence(ctx.tenantId, [intake.id]),
+        requirement ? countAuthoritativeEvidenceAttempts(db, ctx.tenantId, requirement.id, { kind: "payment", paymentIntakeId: intake.id }) : Promise.resolve(0),
     ]);
-    const evidence = evidenceCounts[0]!;
-    const attempts = attemptCounts[0]!;
-    const evidenceTotal = countValue(evidence.total);
-    const attemptTotal = countValue(attempts.total);
+    const evidenceRows = effective.get(intake.id) ?? [];
+    const evidenceTotal = evidenceRows.length;
+    const attemptTotal = countValue(attemptCount);
     const expected = Math.max(requirement?.expectedCount ?? 0, evidenceTotal, attemptTotal);
     const required = intake.evidenceRequired || !!requirement || evidenceTotal > 0;
-    const ready = countValue(evidence.ready);
+    const restoreCancellation = intake.repostOfIntakeId === null
+        ? null
+        : await getPaymentRestoreCancellationCapability(ctx, publicId);
+    const ready = evidenceRows.filter((row) => row.status === "ready" && row.finalizedAt !== null && row.fileId !== null).length;
+    const duplicateReview = intake.status === "cancelled"
+        ? await inspectPaymentReplacement(ctx, publicId).catch(() => null)
+        : await assessPaymentReplacementDuplicates(ctx, intake).catch(() => null);
+    const duplicateIds = duplicateReview?.blockerPublicIds ?? [];
+    const duplicateRows = duplicateIds.length ? await db.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, duplicateIds))) : [];
+    const participantIds = [intake.id, ...duplicateRows.map((row) => row.id)];
+    const lineaged = duplicateRows.length > 0 && (await db.select({ id: paymentReplacementLineages.id }).from(paymentReplacementLineages).where(and(eq(paymentReplacementLineages.tenantId, ctx.tenantId), or(inArray(paymentReplacementLineages.sourcePaymentIntakeId, participantIds), inArray(paymentReplacementLineages.replacementPaymentIntakeId, participantIds))))).length > 0;
+    const legacyMembership = duplicateRows.length > 0 && (await db.select({ id: paymentDuplicateReviewMemberships.id }).from(paymentDuplicateReviewMemberships).where(and(eq(paymentDuplicateReviewMemberships.tenantId, ctx.tenantId), or(inArray(paymentDuplicateReviewMemberships.canonicalPaymentIntakeId, participantIds), inArray(paymentDuplicateReviewMemberships.candidatePaymentIntakeId, participantIds))))).length > 0;
+    const malformedCandidate = duplicateRows.some((candidate) => candidate.status !== "cancelled" || candidate.amount !== intake.amount || candidate.receivedAt.getTime() !== intake.receivedAt.getTime() || !candidate.payerName || !intake.payerName || normalizeBorrowerText(candidate.payerName) !== normalizeBorrowerText(intake.payerName));
+    // Any live duplicate blocker must enter the explicit identity workflow,
+    // including ordinary mutable targets. The cancelled-only replacement
+    // resolver cannot legally clear a mutable duplicate.
+    const identityDecisionRequired = duplicateRows.length > 0 && (lineaged || legacyMembership || malformedCandidate || intake.status !== "cancelled");
     return {
-        targetAvailable: true, identityResolved: true, state: ["posted", "reversed", "duplicate", "cancelled"].includes(intake.status) ? "posted" : "mutable",
+        targetAvailable: true, identityResolved: true, state: intake.status === "cancelled" ? "cancelled" : intake.status === "duplicate" ? "duplicate" : intake.status === "reversed" ? "reversed" : intake.status === "posted" ? "posted" : "mutable",
         evidenceRequired: required, evidenceReady: evidenceTotal <= 20 && attemptTotal <= 20 && (!required || (expected > 0 && ready >= expected && evidenceTotal === ready)),
-        pendingEvidenceCount: countValue(evidence.pending), rejectedEvidenceCount: countValue(evidence.rejected),
+        pendingEvidenceCount: evidenceRows.filter((row) => row.status === "pending").length, rejectedEvidenceCount: evidenceRows.filter((row) => row.status === "rejected").length,
         evidenceOverflow: evidenceTotal > 20 || attemptTotal > 20,
+        restoreCancellationAllowed: restoreCancellation?.allowed,
+        restoreCancellationBlockedReason: restoreCancellation?.blockedReason,
+        restoreCancellationStateHash: restoreCancellation?.stateHash,
+        duplicateReviewRequired: !!duplicateReview?.blockerPublicIds?.length,
+        duplicateBlockerPublicIds: duplicateReview?.blockerPublicIds ?? [],
+        identityDecisionRequired,
+        paymentBlockers: duplicateReview?.blockerPublicIds?.length ? [classifyPaymentWorkflowBlocker("PAYMENT_DUPLICATE_REQUIRES_REVIEW", duplicateReview.blockerPublicIds)] : [],
     };
 }
 
@@ -103,9 +126,9 @@ async function disbursementObservation(ctx: CommandContext, publicId: string): P
     return { targetAvailable: true, identityResolved: true, state: event.status === "draft" ? "mutable" : "posted", loanType: loan.repaymentType === "floating" ? "floating" : "scheduled", evidenceRequired: summary.required, evidenceReady: summary.ready && !summary.overflow, pendingEvidenceCount: summary.pending, rejectedEvidenceCount: summary.rejected, evidenceOverflow: summary.overflow };
 }
 
-export async function resolveWorkflowFromBackend(ctx: CommandContext, input: ResolverWireInput, profile: ToolProfile, catalogVersion: string, workflowVersion: string) {
+export async function resolveWorkflowFromBackend(ctx: CommandContext, input: ResolverWireInput, profile: ToolProfile, catalogVersion: string, workflowVersion: string, guidanceVersion?: string, catalog: readonly import("./catalog-types").McpToolDefinition[] = []) {
     let observation: ResolverObservation = {};
-    if (input.target) {
+    if (input.target && !(input.intent === "tool_help" && !input.toolName)) {
         if (input.target.kind === "payment_intake") observation = await paymentObservation(ctx, input.target.publicId);
         else if (input.target.kind === "loan") observation = await loanObservation(ctx, input.target.publicId);
         else if (input.target.kind === "loan_disbursement") observation = await disbursementObservation(ctx, input.target.publicId);
@@ -116,5 +139,15 @@ export async function resolveWorkflowFromBackend(ctx: CommandContext, input: Res
                 : { targetAvailable: false };
         }
     }
-    return resolveWorkflowPolicy({ ...input, profile }, observation, { profile, catalogVersion, workflowVersion } satisfies ResolverProfile);
+    if (input.intent === "defer_installment" && input.target?.kind === "loan" && input.schedulePublicId && observation.targetAvailable === true) {
+        const inspection = await inspectLoanScheduleDeferral(ctx, input.target.publicId, input.schedulePublicId);
+        observation = {
+            ...observation,
+            scheduleDeferralEligible: inspection.eligible,
+            ...(inspection.eligible
+                ? { scheduleDeferral: inspection }
+                : { scheduleDeferralBlockedReason: inspection.blockedReason }),
+        };
+    }
+    return resolveWorkflowPolicy({ ...input, profile }, observation, { profile, catalogVersion, workflowVersion, guidanceVersion, catalog } satisfies ResolverProfile);
 }

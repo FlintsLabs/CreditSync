@@ -50,6 +50,22 @@ describe("workflow API contracts", () => {
         expect(calls.some((call) => call.url === "/transactions")).toBe(false);
     });
 
+    test("passes receipt attachment requirement and stable command context", async () => {
+        let received: { body: unknown; headers?: Record<string, string> } | undefined;
+        const client: HttpClient = {
+            async get() { return { data: null }; },
+            async post<T>(_url: string, body?: unknown, config?: { headers?: Record<string, string> }) {
+                received = { body, headers: config?.headers };
+                return { data: { publicId: INTAKE_ID, status: "draft" } as T };
+            },
+        };
+        await createPaymentWorkflow(client, { amount: "300.00", receivedAt: "2026-10-07T05:12:00.000Z", attachmentRequirement: { expectedCount: 2 } }, {
+            idempotencyKey: "stable", requestId: "request", correlationId: "correlation",
+        });
+        expect(received?.body).toMatchObject({ amount: "300.00", attachmentRequirement: { expectedCount: 2 } });
+        expect(received?.headers).toEqual({ "Idempotency-Key": "stable", "X-Request-Id": "request", "X-Correlation-Id": "correlation" });
+    });
+
     test("preserves semantic duplicate warnings and never previews or posts them", async () => {
         const calls: string[] = [];
         const client: HttpClient = {

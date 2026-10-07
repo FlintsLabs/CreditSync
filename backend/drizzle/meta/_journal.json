@@ -547,6 +547,69 @@
       "when": 1789084800005,
       "tag": "0077_financial_evidence_attempt_bindings",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1789929124993,
+      "tag": "0078_cancelled_restore_attempts",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1789929124994,
+      "tag": "0079_cancelled_payment_replacement",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1789929124995,
+      "tag": "0080_cancelled_payment_duplicate_reviews",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1789929124996,
+      "tag": "0081_cancelled_duplicate_canonical_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1789929124997,
+      "tag": "0082_payment_identity_decisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1789929124998,
+      "tag": "0083_payment_identity_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1789929124999,
+      "tag": "0084_payment_evidence_recovery_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1789929125000,
+      "tag": "0085_payment_evidence_recovery_requirement_decisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1791321600000,
+      "tag": "0086_selected_floating_accrual_targets",
+      "breakpoints": true
     }
   ]
 }

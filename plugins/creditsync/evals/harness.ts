@@ -16,6 +16,9 @@ const LOAN_C = "0198c481-3e2b-7000-8000-000000000033";
 const DRAFT = "0198c481-3e2b-7000-8000-000000000034";
 const REPLACEMENT = "0198c481-3e2b-7000-8000-000000000035";
 const REPLACEMENT_AUDIT = "0198c481-3e2b-7000-8000-000000000037";
+const DUPLICATE_CANDIDATE = "0198c481-3e2b-7000-8000-000000000038";
+const DUPLICATE_REVIEW = "0198c481-3e2b-7000-8000-000000000039";
+const DUPLICATE_EXECUTION = "0198c481-3e2b-7000-8000-000000000040";
 const CANCELLATION_PREVIEW = "0198c481-3e2b-7000-8000-000000000038";
 const CANCELLATION_AUDIT = "0198c481-3e2b-7000-8000-000000000039";
 const DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000051";
@@ -256,6 +259,7 @@ class ScriptedMcp {
                 evidence: [],
                 latestProposal: null,
                 cancellation: { allowed: false, stateHash: "c".repeat(64), blockedReason: null, batchPublicId: null },
+                restoreCancellation: null,
                 ...(step.result ?? {}),
             }
             : (step.result ?? {});
@@ -287,8 +291,8 @@ const ALLOCATION_REVERSAL_TRANSACTION = "0198c481-3e2b-7000-8000-000000000416";
 const ALLOCATION_REPLACEMENT_TRANSACTION = "0198c481-3e2b-7000-8000-000000000417";
 
 const resolverFixture = (status: string, extras: Record<string, unknown> = {}) => ({
-    workflowId: "creditsync.synthetic", workflowVersion: "workflow-resolver-1.0.0", catalogVersion: "mcp-catalog-synthetic",
-    policyRevision: "evidence-safety-2026-09-14", observed: { state: "mutable", loanType: null, evidenceReady: false },
+    workflowId: "creditsync.synthetic", workflowVersion: "workflow-resolver-1.2.0", catalogVersion: "mcp-catalog-synthetic",
+    policyRevision: "restore-cancellation-2026-09-21", observed: { state: "mutable", loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null, paymentBlockers: [] },
     status, nextSteps: [], blockers: [], prohibitedTools: [], reevaluateOn: "evidence_change", ...extras,
 });
 
@@ -2651,6 +2655,51 @@ const SCENARIOS: Record<string, Scenario> = {
         ],
         run: async (mcp) => { const detail = await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); try { await mcp.call("payment.cancel", { paymentIntakePublicId: INTAKE, reason: "Entered in error", idempotencyKey: "cancel-stale", expectedStateHash: detail.cancellation.stateHash }); } catch (error) { if (error instanceof ScriptedMcpError && error.code === "PAYMENT_CANCEL_STALE") return { outcome: "stopped", stopReason: "stale-cancellation-state" } as const; throw error; } return { outcome: "completed" } as const; },
     },
+    "cancelled-payment-replacement": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "cancelled", receivedAt: "2026-09-21T12:05:00.000Z", amount: "200.00", evidence: [], cancellation: { allowed: true, stateHash: "c".repeat(64), blockedReason: null, batchPublicId: null } } },
+            { name: "payment.replacement.inspect", arguments: { paymentIntakePublicId: INTAKE }, result: { sourcePaymentIntakePublicId: INTAKE, allowed: true, blockers: [], blockerDetails: [], stateHash: "c".repeat(64), replacementPaymentIntakePublicId: null, lineagePublicId: null } },
+            { name: "payment.replacement.create", arguments: { paymentIntakePublicId: INTAKE, reason: "Correct contract mapping", idempotencyKey: "replacement-1", expectedStateHash: "c".repeat(64) }, result: { sourcePaymentIntakePublicId: INTAKE, replacementPaymentIntakePublicId: REPLACEMENT, status: "draft", auditPublicId: REPLACEMENT_AUDIT, correlationId: REPLACEMENT_AUDIT, lineagePublicId: REPLACEMENT_AUDIT } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: REPLACEMENT, allocations: [{ borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_B, amount: "100.00" }, { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_C, amount: "100.00" }] }, result: { publicId: PROPOSAL, version: 1, status: "ready", warnings: [], totalAllocated: "200.00", allocations: [{ publicId: PROPOSAL, amount: "100.00", borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_B }, { publicId: REPLACEMENT_AUDIT, amount: "100.00", borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_C }] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: REPLACEMENT, proposalPublicId: PROPOSAL }, result: { publicId: REPLACEMENT, status: "posted", repostOfIntakePublicId: null, repostedByIntakePublicId: null, transactions: [{ publicId: REPLACEMENT_AUDIT, amount: "200.00", principalComponent: "200.00", interestComponent: "0.00", feeComponent: "0.00", penaltyComponent: "0.00", entryType: "payment", postedAt: "2026-09-21T12:05:00.000Z" }] } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("intake.get", { paymentIntakePublicId: INTAKE });
+            const inspection = await mcp.call("payment.replacement.inspect", { paymentIntakePublicId: INTAKE });
+            await mcp.call("payment.replacement.create", { paymentIntakePublicId: INTAKE, reason: "Correct contract mapping", idempotencyKey: "replacement-1", expectedStateHash: inspection.stateHash });
+            const preview = await mcp.call("payment.preview", { paymentIntakePublicId: REPLACEMENT, allocations: [{ borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_B, amount: "100.00" }, { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_C, amount: "100.00" }] });
+            await mcp.call("payment.post", { paymentIntakePublicId: REPLACEMENT, proposalPublicId: preview.publicId });
+            return { outcome: "completed" } as const;
+        },
+    },
+    "cancelled-payment-duplicate-review": {
+        script: [
+            { name: "payment.replacement.inspect", arguments: { paymentIntakePublicId: INTAKE }, result: { sourcePaymentIntakePublicId: INTAKE, allowed: false, blockers: ["PAYMENT_DUPLICATE_REQUIRES_REVIEW"], blockerDetails: [{ code: "PAYMENT_DUPLICATE_REQUIRES_REVIEW", intakePublicIds: [DUPLICATE_CANDIDATE], nextAction: "identity_review", retryable: false }], blockerPublicIds: [DUPLICATE_CANDIDATE], stateHash: "c".repeat(64), replacementPaymentIntakePublicId: null, lineagePublicId: null } },
+            { name: "payment.replacement.duplicate-review.preview", arguments: { canonicalPaymentIntakePublicId: INTAKE, candidatePaymentIntakePublicIds: [DUPLICATE_CANDIDATE], reason: "Owner confirmed these cancelled drafts represent one receipt", idempotencyKey: "duplicate-review-preview-1" }, result: { duplicateReviewPublicId: DUPLICATE_REVIEW, status: "previewed", canonicalPaymentIntakePublicId: INTAKE, candidatePaymentIntakePublicIds: [DUPLICATE_CANDIDATE], canonicalEvidenceCandidatePublicIds: [], previewHash: "d".repeat(64), canonicalStateHash: "e".repeat(64), evidenceHash: "f".repeat(64), dependencyHash: "a".repeat(64), expiresAt: "2026-09-22T12:15:00.000Z", auditPublicId: DUPLICATE_REVIEW, correlationId: DUPLICATE_REVIEW } },
+            { name: "payment.replacement.duplicate-review.execute", arguments: { duplicateReviewPublicId: DUPLICATE_REVIEW, previewHash: "d".repeat(64), confirmed: true, reason: "Owner confirmed these cancelled drafts represent one receipt", idempotencyKey: "duplicate-review-execute-1" }, result: { duplicateReviewPublicId: DUPLICATE_REVIEW, status: "executed", auditPublicId: DUPLICATE_EXECUTION, correlationId: DUPLICATE_EXECUTION, executionPublicId: DUPLICATE_EXECUTION } },
+            { name: "payment.replacement.inspect", arguments: { paymentIntakePublicId: INTAKE }, result: { sourcePaymentIntakePublicId: INTAKE, allowed: true, blockers: [], blockerDetails: [], stateHash: "c".repeat(64), replacementPaymentIntakePublicId: null, lineagePublicId: null } },
+            { name: "payment.replacement.create", arguments: { paymentIntakePublicId: INTAKE, reason: "Correct contract mapping", idempotencyKey: "replacement-1", expectedStateHash: "c".repeat(64) }, result: { sourcePaymentIntakePublicId: INTAKE, replacementPaymentIntakePublicId: REPLACEMENT, status: "draft", auditPublicId: REPLACEMENT_AUDIT, correlationId: REPLACEMENT_AUDIT, lineagePublicId: REPLACEMENT_AUDIT } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: REPLACEMENT, allocations: [{ borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_B, amount: "100.00" }, { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_C, amount: "100.00" }] }, result: { publicId: PROPOSAL, version: 1, status: "ready", warnings: [], totalAllocated: "200.00", allocations: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: REPLACEMENT, proposalPublicId: PROPOSAL }, result: { publicId: REPLACEMENT, status: "posted", repostOfIntakePublicId: null, repostedByIntakePublicId: null, transactions: [] } },
+        ],
+        run: async (mcp) => { const first = await mcp.call("payment.replacement.inspect", { paymentIntakePublicId: INTAKE }); await mcp.call("payment.replacement.duplicate-review.preview", { canonicalPaymentIntakePublicId: INTAKE, candidatePaymentIntakePublicIds: [DUPLICATE_CANDIDATE], reason: "Owner confirmed these cancelled drafts represent one receipt", idempotencyKey: "duplicate-review-preview-1" }); await mcp.call("payment.replacement.duplicate-review.execute", { duplicateReviewPublicId: DUPLICATE_REVIEW, previewHash: "d".repeat(64), confirmed: true, reason: "Owner confirmed these cancelled drafts represent one receipt", idempotencyKey: "duplicate-review-execute-1" }); await mcp.call("payment.replacement.inspect", { paymentIntakePublicId: INTAKE }); await mcp.call("payment.replacement.create", { paymentIntakePublicId: INTAKE, reason: "Correct contract mapping", idempotencyKey: "replacement-1", expectedStateHash: first.stateHash }); const preview = await mcp.call("payment.preview", { paymentIntakePublicId: REPLACEMENT, allocations: [{ borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_B, amount: "100.00" }, { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_C, amount: "100.00" }] }); await mcp.call("payment.post", { paymentIntakePublicId: REPLACEMENT, proposalPublicId: preview.publicId }); return { outcome: "completed" } as const; },
+    },
+    "cancelled-payment-duplicate-review-stop": {
+        script: [{ name: "payment.replacement.inspect", arguments: { paymentIntakePublicId: INTAKE }, result: { sourcePaymentIntakePublicId: INTAKE, allowed: false, blockers: ["PAYMENT_DUPLICATE_REQUIRES_REVIEW"], blockerDetails: [{ code: "PAYMENT_DUPLICATE_REQUIRES_REVIEW", intakePublicIds: [DUPLICATE_CANDIDATE], nextAction: "identity_review", retryable: false }], blockerPublicIds: [DUPLICATE_CANDIDATE], stateHash: "c".repeat(64), replacementPaymentIntakePublicId: null, lineagePublicId: null } }],
+        run: async (mcp) => { const inspection = await mcp.call("payment.replacement.inspect", { paymentIntakePublicId: INTAKE }); return { outcome: "stopped", stopReason: inspection.blockers[0] } as const; },
+    },
+    "deferral-eligible-confirmed": {
+        script: [
+            { name: "workflow.resolve", arguments: { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A } }, result: resolverFixture("confirmation_required", { nextSteps: [{ toolName: "loan.schedule.defer", arguments: { loanPublicId: LOAN_A, schedulePublicId: ALLOCATION_SOURCE_SCHEDULE, reason: "Owner confirmed deferral", idempotencyKey: "defer-eval-1", confirmed: "true" }, requiredInputs: ["confirmed", "reason", "idempotencyKey"], requiresConfirmation: true }], blockers: ["EXPLICIT_CONFIRMATION_REQUIRED"], prohibitedTools: [] }) },
+            { name: "loan.schedule.defer", arguments: { loanPublicId: LOAN_A, schedulePublicId: ALLOCATION_SOURCE_SCHEDULE, reason: "Owner confirmed deferral", idempotencyKey: "defer-eval-1", confirmed: true }, result: { loanPublicId: LOAN_A, sourceSchedulePublicId: ALLOCATION_SOURCE_SCHEDULE, replacementSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, sourceStatus: "deferred", replacementInstallmentNo: 10, replacementDueDate: "2026-08-20", scheduledPrincipal: "80.00", scheduledInterest: "20.00", scheduledFee: "0.00", scheduledTotal: "100.00", auditPublicId: "0198c481-3e2b-7000-8000-000000000420", correlationId: "0198c481-3e2b-7000-8000-000000000421" } },
+        ],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A } }); await mcp.call("loan.schedule.defer", { loanPublicId: LOAN_A, schedulePublicId: ALLOCATION_SOURCE_SCHEDULE, reason: "Owner confirmed deferral", idempotencyKey: "defer-eval-1", confirmed: true }); return { outcome: "completed" } as const; },
+    },
+    "deferral-unconfirmed-stop": { script: [{ name: "workflow.resolve", arguments: { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A } }, result: resolverFixture("confirmation_required", { blockers: ["EXPLICIT_CONFIRMATION_REQUIRED"], prohibitedTools: ["loan.schedule.defer"] }) }], run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A } }); return { outcome: "stopped", stopReason: "missing-explicit-confirmation" } as const; } },
+    "deferral-partial-installment-stop": { script: [{ name: "workflow.resolve", arguments: { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A } }, result: resolverFixture("blocked", { blockers: ["SCHEDULE_DEFERRAL_INELIGIBLE"], prohibitedTools: ["loan.schedule.defer"] }) }], run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A } }); return { outcome: "stopped", stopReason: "partial-installment" } as const; } },
+    "deferral-stale-state-stop": { script: [{ name: "workflow.resolve", arguments: { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A }, knownWorkflowVersion: "old" }, result: resolverFixture("refresh_required", { blockers: ["WORKFLOW_VERSION_STALE"], prohibitedTools: ["loan.schedule.defer"] }) }], run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A }, knownWorkflowVersion: "old" }); return { outcome: "stopped", stopReason: "stale-guidance" } as const; } },
+    "deferral-wrong-profile-stop": { script: [{ name: "workflow.resolve", arguments: { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A } }, result: resolverFixture("connection_required", { blockers: ["WORKFLOW_REQUIRES_ANOTHER_CONNECTION"], prohibitedTools: ["loan.schedule.defer"] }) }], run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "defer_installment", target: { kind: "loan", publicId: LOAN_A } }); return { outcome: "stopped", stopReason: "wrong-profile" } as const; } },
+    "tool-help-never-executes-write": { script: [{ name: "workflow.resolve", arguments: { intent: "tool_help", toolName: "loan.schedule.defer" }, result: resolverFixture("next_step", { blockers: [], prohibitedTools: ["loan.schedule.defer"] }) }], run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "tool_help", toolName: "loan.schedule.defer" }); return { outcome: "stopped", stopReason: "documentation-only" } as const; } },
 };
 
 export const EVAL_SCENARIO_IDS = Object.freeze(Object.keys(SCENARIOS));

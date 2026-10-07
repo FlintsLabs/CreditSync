@@ -2,16 +2,30 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { db } from "../db";
-import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentEvidence, paymentIntakes, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanSchedules, loanScheduleDeferrals, loans, paymentEvidence, paymentIntakes, users } from "../db/schema";
 import type { CommandContext } from "../services/command-context";
 import { createDisbursementDraft } from "../services/loan-disbursement-service";
 import { createPaymentIntake } from "../services/payment-service";
+import { cancelPaymentIntake, getPaymentCancellationCapability } from "../services/payment-cancellation-service";
+import { executePaymentDuplicateReview, previewPaymentDuplicateReview } from "../services/payment-duplicate-review-service";
 import { resolveWorkflowFromBackend } from "./workflow-resolver-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
 function context(user: { id: number; tenantId: string }): CommandContext {
     return { tenantId: user.tenantId, actorUserId: user.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() };
+}
+
+async function cancelPayment(user: { id: number; tenantId: string }, publicId: string) {
+    const ctx = context(user);
+    const capability = await getPaymentCancellationCapability(ctx, publicId);
+    await cancelPaymentIntake(ctx, publicId, { reason: "resolver observation regression", idempotencyKey: crypto.randomUUID(), expectedStateHash: capability.stateHash });
+}
+
+async function executeLegacyMembership(user: { id: number; tenantId: string }, canonicalPublicId: string, candidatePublicId: string) {
+    const ctx = context(user);
+    const preview = await previewPaymentDuplicateReview(ctx, { canonicalPaymentIntakePublicId: canonicalPublicId, candidatePaymentIntakePublicIds: [candidatePublicId], reason: "resolver legacy membership", idempotencyKey: crypto.randomUUID() });
+    return executePaymentDuplicateReview(ctx, { duplicateReviewPublicId: preview.duplicateReviewPublicId, previewHash: preview.previewHash, confirmed: true, reason: "resolver legacy membership", idempotencyKey: crypto.randomUUID() });
 }
 
 if (process.env.TEST_DATABASE_URL) {
@@ -35,6 +49,33 @@ integrationTest("uses exact finalized payment file association and tenant author
     const foreign = await resolveWorkflowFromBackend(context(otherTenant), input, "payments", "resolver-catalog", "resolver-workflow");
     expect(foreign.observed.evidenceReady).toBe(false);
     expect(foreign.status).toBe("needs_input");
+});
+
+integrationTest("deferral resolver reads the exact selected schedule and never executes it", async () => {
+    const owner = await db.insert(users).values({ tenantId: "resolver-deferral", email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+    const borrower = await db.insert(borrowers).values({ tenantId: owner.tenantId, ownerUserId: owner.id, name: "Resolver deferral borrower" }).returning().then((rows) => rows[0]!);
+    const loan = await db.insert(loans).values({ tenantId: owner.tenantId, ownerUserId: owner.id, borrowerId: borrower.id, principalAmount: "200.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, installmentAmount: "100.00", totalInstallments: 2, startDate: "2026-08-09", outstandingPrincipal: "200.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+    const source = await db.insert(loanSchedules).values({ tenantId: owner.tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-10", scheduledPrincipal: "90.00", scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00", remainingDue: "100.00", status: "pending" }).returning().then((rows) => rows[0]!);
+    await db.insert(loanSchedules).values({ tenantId: owner.tenantId, loanId: loan.id, installmentNo: 2, dueDate: "2026-08-11", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", remainingDue: "100.00", status: "pending" });
+    const target = { kind: "loan" as const, publicId: loan.publicId };
+    const missing = await resolveWorkflowFromBackend(context(owner), { intent: "defer_installment", target, attachments: "none" }, "loans", "resolver-catalog", "resolver-workflow");
+    expect(missing.status).toBe("next_step");
+    expect(missing.blockers).toContain("SCHEDULE_SELECTION_REQUIRED");
+    const selected = await resolveWorkflowFromBackend(context(owner), { intent: "defer_installment", target, schedulePublicId: source.publicId, attachments: "none" }, "loans", "resolver-catalog", "resolver-workflow");
+    expect(selected.status).toBe("confirmation_required");
+    expect(selected.observed.scheduleDeferral).toMatchObject({ eligible: true, sourceDueDate: "2026-08-10", replacementDueDate: "2026-08-12", scheduledPrincipal: "90.00", scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00" });
+    expect(selected.nextSteps[0]).toMatchObject({ toolName: "loan.schedule.defer", requiresConfirmation: true });
+    expect(await db.select().from(loanScheduleDeferrals).where(eq(loanScheduleDeferrals.tenantId, owner.tenantId))).toHaveLength(0);
+    expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, owner.tenantId))).toHaveLength(0);
+    const otherLoan = await db.insert(loans).values({ tenantId: owner.tenantId, ownerUserId: owner.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, installmentAmount: "100.00", totalInstallments: 1, startDate: "2026-08-09", outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+    const foreignSchedule = await db.insert(loanSchedules).values({ tenantId: owner.tenantId, loanId: otherLoan.id, installmentNo: 1, dueDate: "2026-08-10", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", remainingDue: "100.00", status: "pending" }).returning().then((rows) => rows[0]!);
+    const wrongLoan = await resolveWorkflowFromBackend(context(owner), { intent: "defer_installment", target, schedulePublicId: foreignSchedule.publicId, attachments: "none" }, "loans", "resolver-catalog", "resolver-workflow");
+    expect(wrongLoan.status).toBe("blocked");
+    expect(wrongLoan.blockers).toContain("SCHEDULE_UNAVAILABLE");
+    await db.update(loanSchedules).set({ status: "partial", paidTotal: "1.00", remainingDue: "99.00" }).where(eq(loanSchedules.id, source.id));
+    const partial = await resolveWorkflowFromBackend(context(owner), { intent: "defer_installment", target, schedulePublicId: source.publicId, attachments: "none" }, "loans", "resolver-catalog", "resolver-workflow");
+    expect(partial.status).toBe("blocked");
+    expect(partial.nextSteps).toHaveLength(0);
 });
 
 integrationTest.each([
@@ -133,4 +174,33 @@ integrationTest("does not advertise a ready loan observation when more than twen
     expect(resolved.observed.evidenceReady).toBe(false);
     expect(resolved.status).toBe("blocked");
     expect(resolved.blockers).toContain("EVIDENCE_SUMMARY_OVERFLOW_REQUIRES_REVIEW");
+});
+
+integrationTest("observes executed legacy membership without replacement and routes to fresh identity review after a timestamp change", async () => {
+    const owner = await db.insert(users).values({ tenantId: "resolver-legacy-observation", email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+    const canonical = await createPaymentIntake(context(owner), { amount: "10.00", receivedAt: "2026-09-14T08:00:00.000Z", payerName: "Legacy payer" });
+    const candidate = await createPaymentIntake(context(owner), { amount: "10.00", receivedAt: "2026-09-14T08:00:00.000Z", payerName: "Legacy payer" });
+    await cancelPayment(owner, canonical.publicId);
+    await cancelPayment(owner, candidate.publicId);
+    await executeLegacyMembership(owner, canonical.publicId, candidate.publicId);
+    const candidateRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, candidate.publicId) });
+    await db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL session_replication_role = replica`);
+        await tx.update(paymentIntakes).set({ receivedAt: new Date("2026-09-14T08:01:00.000Z") }).where(eq(paymentIntakes.id, candidateRow!.id));
+    });
+    const resolved = await resolveWorkflowFromBackend(context(owner), { intent: "receive_payment", target: { kind: "payment_intake", publicId: canonical.publicId }, attachments: "none" }, "payments", "resolver-catalog", "resolver-workflow");
+    expect(resolved.nextSteps.map((step) => step.toolName)).toContain("payment.identity-decision.preview");
+    expect(resolved.nextSteps.map((step) => step.toolName)).not.toContain("payment.replacement.duplicate-review.preview");
+    expect(resolved.blockers).toContain("PAYMENT_DUPLICATE_REQUIRES_REVIEW");
+});
+
+integrationTest("observes a mutable candidate as requiring identity review instead of advertising legacy review", async () => {
+    const owner = await db.insert(users).values({ tenantId: "resolver-mutable-observation", email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+    const canonical = await createPaymentIntake(context(owner), { amount: "10.00", receivedAt: "2026-09-14T08:10:00.000Z", payerName: "Mutable payer" });
+    const candidate = await createPaymentIntake(context(owner), { amount: "10.00", receivedAt: "2026-09-14T08:10:00.000Z", payerName: "Mutable payer" });
+    await cancelPayment(owner, canonical.publicId);
+    const resolved = await resolveWorkflowFromBackend(context(owner), { intent: "receive_payment", target: { kind: "payment_intake", publicId: canonical.publicId }, attachments: "none" }, "payments", "resolver-catalog", "resolver-workflow");
+    expect(resolved.nextSteps.map((step) => step.toolName)).toContain("payment.identity-decision.preview");
+    expect(resolved.blockers).toContain("PAYMENT_DUPLICATE_REQUIRES_REVIEW");
+    expect(candidate.publicId).toBeTruthy();
 });

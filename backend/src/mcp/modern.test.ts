@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { Elysia } from "elysia";
 import type { CommandContext } from "../services/command-context";
-import { createMcpHttpPlugin, MCP_CATALOG_VERSION, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
+import { advertisedMcpToolMetadata, createMcpHttpPlugin, MCP_CATALOG_VERSION, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
 import { toolNamesForProfile } from "./tool-profiles";
 import type { McpRuntimeConfig } from "./security";
 
@@ -17,12 +17,16 @@ afterEach(async () => {
 });
 
 function startModernServer(
-    observed: { input?: Record<string, unknown>; captureInput?: Record<string, unknown>; captureIdempotency?: string; calls?: number },
-    profiles: readonly ("full" | "core-read")[] = ["full"],
+    observed: { input?: Record<string, unknown>; captureInput?: Record<string, unknown>; captureIdempotency?: string; catalogInput?: Record<string, unknown>; calls?: number; auditLookups?: number },
+    profiles: readonly ("full" | "core-read" | "discovery")[] = ["full"],
 ) {
     const handlers = Object.fromEntries(MCP_TOOL_NAMES.map((name) => [name, async (ctx: CommandContext, input: Record<string, unknown>) => {
         observed.calls = (observed.calls ?? 0) + 1;
         if (name === "borrower.search") observed.input = input;
+        if (name === "tool.catalog.search") {
+            observed.catalogInput = input;
+            return { profile: input.__profile, catalogVersion: input.__catalogVersion, guidanceVersion: input.__guidanceVersion, status: "matches", matches: [], hasMore: false, nextCursor: null, requiredProfiles: [] };
+        }
         if (name === "payment.batch.capture") {
             observed.captureInput = input;
             observed.captureIdempotency = ctx.idempotencyKey;
@@ -31,8 +35,8 @@ function startModernServer(
                 createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" };
         }
         if (name === "workflow.resolve") return {
-            workflowId: "creditsync.inspect", workflowVersion: "workflow-resolver-1.0.0", catalogVersion: MCP_CATALOG_VERSION,
-            policyRevision: "evidence-safety-2026-09-14", observed: { state: "mutable", loanType: null, evidenceReady: false },
+            workflowId: "creditsync.inspect", workflowVersion: "workflow-resolver-1.1.0", catalogVersion: MCP_CATALOG_VERSION,
+            policyRevision: "restore-cancellation-2026-09-21", observed: { state: "mutable", loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null, paymentBlockers: [] },
             status: "next_step", nextSteps: [], blockers: [], prohibitedTools: [], reevaluateOn: "target_change",
         };
         return name === "borrower.search" ? { resolution: "none", matchType: null, candidates: [] } : { ok: true };
@@ -46,7 +50,7 @@ function startModernServer(
         handlers,
         resolvePrincipal: async ({ tenantId }) => ({ tenantId, actorUserId: 7 }),
         consumeRateLimit: async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 }),
-        findAuditPublicIds: async () => ["0198c481-3e2b-7000-8000-000000000003"],
+        findAuditPublicIds: async () => { observed.auditLookups = (observed.auditLookups ?? 0) + 1; return ["0198c481-3e2b-7000-8000-000000000003"]; },
         logger: () => undefined,
     };
     const app = new Elysia();
@@ -101,6 +105,22 @@ async function rawRequestAt(baseUrl: string, path: string, body: Record<string, 
 }
 
 describe("MCP 2026 transport adapter", () => {
+    test("catalog search validates closed public input, injects trusted metadata, and returns no audit envelope", async () => {
+        const observed: { catalogInput?: Record<string, unknown>; calls?: number; auditLookups?: number } = {};
+        const baseUrl = startModernServer(observed);
+        const good = await rawRequest(baseUrl, modernEnvelope("tools/call", { name: "tool.catalog.search", arguments: { query: "ค้นหาผู้กู้" } }));
+        expect(good.body.result.structuredContent.data).toMatchObject({ status: "matches", matches: [] });
+        expect(good.body.result.structuredContent).not.toHaveProperty("auditPublicIds");
+        expect(good.body.result.content[0].text).toContain("No other tool was executed");
+        expect(observed.auditLookups ?? 0).toBe(0);
+        expect(observed.catalogInput).toMatchObject({ query: "ค้นหาผู้กู้", __profile: "full", __catalogVersion: MCP_CATALOG_VERSION });
+        const calls = observed.calls;
+        for (const key of ["tenantId", "actor", "profile", "__profile", "operation"]) {
+            const spoofed = await rawRequest(baseUrl, modernEnvelope("tools/call", { name: "tool.catalog.search", arguments: { query: "borrower", [key]: key === "operation" ? "payment.post" : "spoof" } }));
+            expect(spoofed.body.error).toBeDefined();
+        }
+        expect(observed.calls).toBe(calls);
+    });
     test("advertises and dispatches read-only workflow resolution through full and curated modern profiles", async () => {
         const baseUrl = startModernServer({}, ["full", "core-read"]);
         const request = modernEnvelope("tools/call", {
@@ -110,7 +130,7 @@ describe("MCP 2026 transport adapter", () => {
         const full = await rawRequest(baseUrl, request);
         expect(full.response.status).toBe(200);
         expect(full.body.result.isError).not.toBe(true);
-        expect(full.body.result.structuredContent.data).toMatchObject({ status: "next_step", workflowVersion: "workflow-resolver-1.0.0" });
+        expect(full.body.result.structuredContent.data).toMatchObject({ status: "next_step", workflowVersion: "workflow-resolver-1.1.0" });
         const curated = await rawRequestAt(baseUrl, "/mcp/core-read", request);
         expect(curated.response.status).toBe(200);
         expect(curated.body.result.isError).not.toBe(true);
@@ -128,6 +148,8 @@ describe("MCP 2026 transport adapter", () => {
         expect(discovery.capabilities.tools).toBeDefined();
         const listed = await client.listTools();
         expect(listed.tools.length).toBe(MCP_TOOL_NAMES.length);
+        const expectedDescriptions = new Map<string, string>(advertisedMcpToolMetadata().map((tool) => [tool.name, tool.description]));
+        for (const tool of listed.tools) expect(tool.description).toBe(expectedDescriptions.get(tool.name));
         const result = await client.callTool({ name: "borrower.search", arguments: { query: "borrower" } });
         expect(result.isError).not.toBe(true);
         expect(observed.input).toEqual({ query: "borrower" });
@@ -142,7 +164,8 @@ describe("MCP 2026 transport adapter", () => {
     });
 
     test("legacy transport negotiates every SDK-supported protocol version", async () => {
-        const baseUrl = startModernServer({});
+        const observed: { catalogInput?: Record<string, unknown>; calls?: number } = {};
+        const baseUrl = startModernServer(observed);
         const supportedLegacyVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
         for (const protocolVersion of supportedLegacyVersions) {
             const response = await fetch(`${baseUrl}/mcp`, {
@@ -156,6 +179,14 @@ describe("MCP 2026 transport adapter", () => {
             expect(response.status).toBe(200);
             expect(body.result.protocolVersion).toBe(protocolVersion);
         }
+        const legacy = await fetch(`${baseUrl}/mcp`, {
+            method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method: "tools/call", params: { name: "tool.catalog.search", arguments: { query: "ค้นหาผู้กู้" } } }),
+        });
+        expect(legacy.status).toBe(200);
+        const legacyBody = await legacy.json() as Record<string, any>;
+        expect(legacyBody.result.structuredContent.data.status).toBe("matches");
+        expect(observed.catalogInput?.__profile).toBe("full");
     });
 
     test("v2 schema rejects invalid UUID/money/idempotency arguments before the service", async () => {
@@ -256,6 +287,26 @@ describe("MCP 2026 transport adapter", () => {
         expect(full.response.status).toBe(200);
         expect(full.body.result.tools).toHaveLength(MCP_TOOL_NAMES.length);
         expect(full.body.result.nextCursor).toBeUndefined();
+    });
+
+    test("discovery is the same exact eight-tool read-only profile over both protocol adapters", async () => {
+        const observed: { calls?: number } = {};
+        const baseUrl = startModernServer(observed, ["discovery"]);
+        for (const modern of [true, false]) {
+            const first = modern
+                ? await rawRequestAt(baseUrl, "/mcp/discovery", modernEnvelope("tools/list"))
+                : await (async () => {
+                    const response = await fetch(`${baseUrl}/mcp/discovery`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }) });
+                    return { response, body: await response.json() as Record<string, any> };
+                })();
+            expect(first.response.status).toBe(200);
+            expect(first.body.result.tools.map((tool: { name: string }) => tool.name)).toEqual(toolNamesForProfile("discovery"));
+            expect(first.body.result.nextCursor).toBeUndefined();
+            expect(first.body.result.tools.every((tool: { annotations: { readOnlyHint: boolean } }) => tool.annotations.readOnlyHint)).toBe(true);
+        }
+        const denied = await rawRequestAt(baseUrl, "/mcp/discovery", modernEnvelope("tools/call", { name: "payment.post", arguments: {} }));
+        expect(denied.body.error).toBeDefined();
+        expect(observed.calls ?? 0).toBe(0);
     });
 
     test("modern envelope, version, and standard-header validation reject before dispatch", async () => {

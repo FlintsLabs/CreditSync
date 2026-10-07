@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
+import { invalidateTenantCache } from "../lib/cache";
 import { auditLogs, users } from "../db/schema";
 import { getMcpDiagnosticTrace, listMcpDiagnostics, persistMcpDiagnosticBestEffort } from "../services/mcp-diagnostic-service";
 import {
@@ -75,6 +76,10 @@ import {
     type PrepareEvidenceInput,
 } from "../services/payment-service";
 import { cancelPaymentIntake } from "../services/payment-cancellation-service";
+import { createPaymentReplacement, inspectPaymentReplacement } from "../services/payment-replacement-service";
+import { executePaymentDuplicateReview, previewPaymentDuplicateReview } from "../services/payment-duplicate-review-service";
+import { executePaymentIdentityDecision, previewPaymentIdentityDecision } from "../services/payment-identity-decision-service";
+import { executePaymentEvidenceRecovery, previewPaymentEvidenceRecovery } from "../services/payment-evidence-recovery-service";
 import {
     executeReverseWithInterestAccrual,
     previewReverseWithInterestAccrual,
@@ -97,7 +102,7 @@ import {
     type UpdateDisbursementDraftInput,
 } from "../services/loan-disbursement-service";
 import {
-    createIntermediary, createIntermediaryCollection, createIntermediaryRemittance,
+    cancelIntermediaryCollection, createIntermediary, createIntermediaryCollection, createIntermediaryRemittance,
     finalizeIntermediaryRemittanceEvidence, getIntermediaryRemittance, listIntermediaryCollections,
     postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance,
     saveRemittanceAllocations, searchIntermediaries, type IntermediaryRemittanceEvidenceGateway,
@@ -146,7 +151,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
-import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, cancelPaymentRestoreDraft, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { executePaymentReconciliationReflow, previewPaymentReconciliationReflow } from "../services/payment-reconciliation-reflow-service";
 import { addPaymentBatchItem, cancelPaymentBatch, capturePaymentBatch, createPaymentBatch, decidePaymentBatch, editPaymentBatchStagingItem, executePaymentBatch, finalizePaymentBatchEvidenceMany, finalizePaymentBatchStagingEvidence, getPaymentBatch, getPaymentBatchWorkspace, preparePaymentBatchEvidenceMany, preparePaymentBatchStagingEvidence, previewPaymentBatch, reviewPaymentBatchStagingItem, splitPaymentBatch, stagePaymentBatchItems } from "../services/payment-batch-service";
 import { discoverPaymentBatchCandidates } from "../services/payment-batch-candidate-service";
@@ -156,7 +161,9 @@ import { importChatGptDisbursementEvidence, importChatGptPaymentEvidence, import
 import { extractPaymentBatchStagingItem } from "../services/payment-batch-ocr-service";
 import { inspectLoanContext, matchPaymentContext, resolveAndPortfolio } from "./composite-reads";
 import { resolveWorkflowFromBackend } from "./workflow-resolver-service";
+import { searchToolCatalog, type ToolCatalogSearchInput } from "./tool-catalog-search";
 import { WORKFLOW_VERSION } from "./workflow-registry";
+import { deferLoanSchedule } from "../services/loan-schedule-deferral-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -210,7 +217,15 @@ export function createDefaultMcpToolHandlers(
         (input.__profile as ToolProfile | undefined) ?? "full",
         (input.__catalogVersion as string | undefined) ?? "mcp-catalog-unknown",
         (input.__workflowVersion as string | undefined) ?? WORKFLOW_VERSION,
+        (input.__guidanceVersion as string | undefined) ?? undefined,
+        (input.__catalog as import("./catalog-types").McpToolDefinition[] | undefined) ?? [],
     ),
+    "tool.catalog.search": async (_ctx, input) => searchToolCatalog(input as unknown as ToolCatalogSearchInput, {
+        profile: (input.__profile as ToolProfile | undefined) ?? "full",
+        catalogVersion: (input.__catalogVersion as string | undefined) ?? "mcp-catalog-unknown",
+        guidanceVersion: (input.__guidanceVersion as string | undefined) ?? "mcp-guidance-unknown",
+        catalog: (input.__catalog as import("./catalog-types").McpToolDefinition[] | undefined) ?? [],
+    }),
     "borrower.create": (ctx, input) => createBorrower(ctx, input as unknown as BorrowerInput),
     "borrower.update": (ctx, input) => updateBorrower(
         ctx,
@@ -279,6 +294,30 @@ export function createDefaultMcpToolHandlers(
             reason: asString(input, "reason"), idempotencyKey, expectedStateHash: asString(input, "expectedStateHash"),
         });
     },
+    "payment.replacement.inspect": (ctx, input) => inspectPaymentReplacement(ctx, asString(input, "paymentIntakePublicId")),
+    "payment.replacement.create": (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment replacement requires an idempotency key", 400);
+        return createPaymentReplacement(ctx, { paymentIntakePublicId: asString(input, "paymentIntakePublicId"), reason: asString(input, "reason"), idempotencyKey, expectedStateHash: asString(input, "expectedStateHash") });
+    },
+    "payment.replacement.duplicate-review.preview": (ctx, input) => previewPaymentDuplicateReview(ctx, {
+        canonicalPaymentIntakePublicId: asString(input, "canonicalPaymentIntakePublicId"), candidatePaymentIntakePublicIds: input.candidatePaymentIntakePublicIds as string[], canonicalEvidenceCandidatePublicIds: input.canonicalEvidenceCandidatePublicIds as string[] | undefined, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+    }),
+    "payment.replacement.duplicate-review.execute": (ctx, input) => executePaymentDuplicateReview(ctx, {
+        duplicateReviewPublicId: asString(input, "duplicateReviewPublicId"), previewHash: asString(input, "previewHash"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+    }),
+    "payment.identity-decision.preview": (ctx, input) => previewPaymentIdentityDecision(ctx, {
+        participantPaymentIntakePublicIds: input.participantPaymentIntakePublicIds as string[], decision: input.decision as "same_payment" | "distinct_payment", reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+    }),
+    "payment.identity-decision.execute": (ctx, input) => executePaymentIdentityDecision(ctx, {
+        identityDecisionPreviewPublicId: asString(input, "identityDecisionPreviewPublicId"), previewHash: asString(input, "previewHash"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+    }),
+    "payment.evidence-recovery.preview": (ctx, input) => previewPaymentEvidenceRecovery(ctx, {
+        sourcePaymentIntakePublicId: asString(input, "sourcePaymentIntakePublicId"), reason: asString(input, "reason"), expectedCount: input.expectedCount as number, reuseEvidence: input.reuseEvidence === true, requirementDecision: input.requirementDecision as { confirmed: true; reason: string } | undefined, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+    }),
+    "payment.evidence-recovery.execute": (ctx, input) => executePaymentEvidenceRecovery(ctx, {
+        recoveryPreviewPublicId: asString(input, "recoveryPreviewPublicId"), previewHash: asString(input, "previewHash"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+    }),
     "payment.post": (ctx, input) => postPayment(
         paymentPostCommandContext(ctx, input),
         asString(input, "paymentIntakePublicId"),
@@ -400,6 +439,17 @@ export function createDefaultMcpToolHandlers(
             idempotencyKey,
         });
     },
+    "payment.restore.cancel": (ctx, input) => {
+        const inputKey = asString(input, "idempotencyKey");
+        if (ctx.idempotencyKey && inputKey && ctx.idempotencyKey.trim() !== inputKey.trim()) {
+            throw new DomainError("IDEMPOTENCY_CONFLICT", "Command and transport idempotency keys differ", 409);
+        }
+        const idempotencyKey = ctx.idempotencyKey ?? inputKey;
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore cancellation requires an idempotency key", 400);
+        return cancelPaymentRestoreDraft(ctx, asString(input, "restoreDraftPublicId"), {
+            expectedStateHash: asString(input, "expectedStateHash"), reason: asString(input, "reason"), idempotencyKey,
+        });
+    },
     "payment.restore.evidence.prepare": (ctx, input) => {
         const { restoreDraftPublicId, ...evidence } = input;
         return preparePaymentRestoreEvidence(
@@ -449,6 +499,15 @@ export function createDefaultMcpToolHandlers(
         paymentStartDate: asString(input, "paymentStartDate"),
         reason: asString(input, "reason"),
     }),
+    "loan.schedule.defer": async (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Schedule deferrals require an idempotency key", 400);
+        const result = await deferLoanSchedule({ ...ctx, idempotencyKey }, asString(input, "loanPublicId"), asString(input, "schedulePublicId"), {
+            reason: asString(input, "reason"),
+        });
+        await invalidateTenantCache(ctx.tenantId);
+        return result;
+    },
     "loan.interest-rate.list": (ctx, input) => listLoanInterestRates(ctx, asString(input, "loanPublicId")),
     "loan.interest-rate.preview": (ctx, input) => previewLoanInterestRateChange(ctx, asString(input, "loanPublicId"), {
         effectiveDate: asString(input, "effectiveDate"),
@@ -625,6 +684,7 @@ export function createDefaultMcpToolHandlers(
     ),
     "intermediary.collection.list": async (ctx, input) => ({ items: await listIntermediaryCollections(ctx, { intermediaryPublicId: input.intermediaryPublicId as string | undefined, status: input.status as string | undefined }) }),
     "intermediary.collection.create": (ctx, input) => createIntermediaryCollection(ctx, input as any),
+    "intermediary.collection.cancel": (ctx, input) => cancelIntermediaryCollection(ctx, asString(input, "collectionPublicId"), { expectedStateHash: asString(input, "expectedStateHash"), reason: asString(input, "reason") }),
     "intermediary.remittance.get": (ctx, input) => getIntermediaryRemittance(ctx, asString(input, "remittancePublicId")),
     "intermediary.remittance.create": (ctx, input) => createIntermediaryRemittance(ctx, input as any),
     "intermediary.remittance.allocations.save": (ctx, input) => saveRemittanceAllocations(ctx, asString(input, "remittancePublicId"), { collectionPublicIds: input.collectionPublicIds as string[] }),
@@ -693,6 +753,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.allocation-correction.preview": { entityType: "payment_allocation_correction", action: "previewed" },
     "payment.allocation-correction.execute": { entityType: "payment_allocation_correction", action: "executed" },
     "payment.post": { entityType: "payment_intake", action: "posted" },
+    "payment.cancel": { entityType: "payment_intake", action: "cancelled" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
     "payment.reverse-with-accrual.execute": { entityType: "payment_intake", action: "reversed_with_interest_accruals_materialized" },
     "payment.batch.execute": { entityType: "payment_batch", action: "posted" },
@@ -700,9 +761,18 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.reconcile.reflow.execute": { entityType: "payment_reconciliation_reflow", action: "executed" },
     "payment.restore.execute": { entityType: "payment_reconciliation", action: "executed" },
     "payment.restore.create": { entityType: "payment_intake", action: "restore_draft_created" },
+    "payment.restore.cancel": { entityType: "payment_intake", action: "cancelled" },
+    "payment.replacement.create": { entityType: "payment_intake", action: "replacement_draft_created" },
+    "payment.replacement.duplicate-review.preview": { entityType: "payment_duplicate_review", action: "previewed" },
+    "payment.replacement.duplicate-review.execute": { entityType: "payment_duplicate_review", action: "executed" },
+    "payment.identity-decision.preview": { entityType: "payment_identity_decision_preview", action: "previewed" },
+    "payment.identity-decision.execute": { entityType: "payment_identity_decision", action: "executed" },
+    "payment.evidence-recovery.preview": { entityType: "payment_evidence_recovery_preview", action: "previewed" },
+    "payment.evidence-recovery.execute": { entityType: "payment_intake", action: "evidence_recovery_draft_created" },
     "payment.restore.schedule-backfill": { entityType: "loan_schedule", action: "restore_schedule_backfilled" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
+    "loan.schedule.defer": { entityType: "loan_schedule_deferral", action: "deferred" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
     "loan.settlement.execute": { entityType: "loan_settlement", action: "executed" },
     "loan.settlement.reverse": { entityType: "loan_settlement", action: "reversed" },
@@ -716,6 +786,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "loan.commission-participant.end": { entityType: "loan_commission_participant", action: "ended" },
     "payment.intermediary-attribution.create": { entityType: "payment_intermediary_attribution", action: "created" },
     "payment.intermediary-attribution.reverse": { entityType: "payment_intermediary_attribution", action: "reversed" },
+    "intermediary.collection.cancel": { entityType: "intermediary_collection", action: "reversed" },
     "intermediary.disbursement.post": { entityType: "intermediated_disbursement_group", action: "posted" },
     "intermediary.disbursement.reverse": { entityType: "intermediated_disbursement_group", action: "reversed" },
     "intermediary.remittance.post": { entityType: "intermediary_remittance", action: "posted" },
@@ -733,9 +804,12 @@ function resultPublicId(result: unknown) {
     const record = result as Record<string, unknown>;
     const value = record.publicId
         ?? record.id
+        ?? record.paymentIntakePublicId
         ?? record.loanPublicId
         ?? record.settlementPublicId
         ?? record.replacementPublicId
+        ?? record.duplicateReviewPublicId
+        ?? record.executionPublicId
         ?? record.reconciliationPublicId
         ?? record.correctionPublicId
         ?? record.batchPublicId;
@@ -774,6 +848,9 @@ export function createDefaultMcpHttpPlugin(
             return { tenantId: actor.tenantId, actorUserId: actor.id };
         },
         findAuditPublicIds: async ({ ctx, toolName, result }) => {
+            if ((toolName === "payment.identity-decision.preview" || toolName === "payment.identity-decision.execute" || toolName === "payment.evidence-recovery.preview" || toolName === "payment.evidence-recovery.execute") && result && typeof result === "object" && typeof (result as Record<string, unknown>).auditPublicId === "string") {
+                return [(result as Record<string, unknown>).auditPublicId as string];
+            }
             const target = auditTarget[toolName as McpToolName];
             if (toolName === "payment.reconcile.reflow.execute" && target) {
                 const rows = await db.select({ publicId: auditLogs.publicId }).from(auditLogs).where(and(
@@ -784,11 +861,15 @@ export function createDefaultMcpHttpPlugin(
                 )).orderBy(desc(auditLogs.id)).limit(1);
                 return rows.map((row) => row.publicId);
             }
-            const entityId = result && typeof result === "object" && toolName === "payment.restore.create"
+            const entityId = result && typeof result === "object" && toolName === "payment.replacement.create"
+                ? (result as Record<string, unknown>).sourcePaymentIntakePublicId as string | undefined
+                : result && typeof result === "object" && toolName === "payment.restore.create"
                 ? (result as Record<string, unknown>).restoreDraftPublicId as string | undefined
                 : result && typeof result === "object" && toolName === "payment.restore.schedule-backfill"
                     ? (result as Record<string, unknown>).schedulePublicId as string | undefined
-                    : resultPublicId(result);
+            : (toolName === "payment.replacement.duplicate-review.preview" || toolName === "payment.replacement.duplicate-review.execute")
+                ? (result as Record<string, unknown>).duplicateReviewPublicId as string | undefined
+                : resultPublicId(result);
             if (!target || !entityId) return [];
             if (result && typeof result === "object") {
                 const record = result as Record<string, unknown>;
@@ -796,6 +877,7 @@ export function createDefaultMcpHttpPlugin(
                     ...(Array.isArray(record.auditPublicIds) ? record.auditPublicIds : []),
                     record.auditPublicId,
                 ].filter((value): value is string => typeof value === "string");
+                if ((toolName === "payment.identity-decision.preview" || toolName === "payment.identity-decision.execute" || toolName === "payment.evidence-recovery.preview" || toolName === "payment.evidence-recovery.execute") && advertised.length > 0) return advertised;
                 if (advertised.length) {
                     const rows = await db.select({ publicId: auditLogs.publicId }).from(auditLogs).where(and(
                         eq(auditLogs.tenantId, ctx.tenantId),

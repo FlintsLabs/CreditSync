@@ -20,6 +20,8 @@ import { assertPaymentEvidenceReady, finalizePaymentEvidence, normalizeBankRefer
 import { emptyFloatingBatchState, projectFloatingBatchPayment, type FloatingBatchState } from "./payment-batch-accounting-planner";
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference } from "../lib/storage";
 import { cancelLockedPaymentIntake } from "./payment-cancellation-service";
+import { effectivePaymentEvidence, effectiveReadyPaymentEvidence } from "./payment-effective-evidence-service";
+import { lockPaymentWorkflowTenant, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
@@ -80,7 +82,9 @@ async function batchSnapshot(executor: DbExecutor, tenantId: string, batchId: nu
         SELECT jsonb_build_object(
             'items', (SELECT coalesce(jsonb_agg(to_jsonb(i) ORDER BY i.id), '[]') FROM payment_batch_items i WHERE i.tenant_id = ${tenantId} AND i.batch_id = ${batchId}),
             'intakes', (SELECT coalesce(jsonb_agg(to_jsonb(i) ORDER BY i.id), '[]') FROM payment_intakes i WHERE i.tenant_id = ${tenantId} AND i.id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId})),
-            'evidence', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]') FROM payment_evidence e WHERE e.tenant_id = ${tenantId} AND e.payment_intake_id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId}))
+            'evidence', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]') FROM payment_evidence e WHERE e.tenant_id = ${tenantId} AND e.payment_intake_id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId})),
+            'effectiveEvidence', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]') FROM payment_evidence e WHERE e.tenant_id = ${tenantId} AND e.id IN (SELECT source_evidence_id FROM payment_replacement_evidence_references r WHERE r.tenant_id = ${tenantId} AND r.replacement_payment_intake_id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId}))),
+            'supplements', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]') FROM payment_evidence_supplements e WHERE e.tenant_id = ${tenantId} AND e.payment_intake_id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId}))
         ) AS snapshot`);
     const loanRows = await executor.select().from(loans).where(and(eq(loans.tenantId, tenantId), inArray(loans.borrowerId, borrowerIds))).orderBy(asc(loans.id));
     const history: unknown[] = [];
@@ -161,7 +165,7 @@ async function inspectBatchChronology(
     borrowerPublicId: string,
     currentItems: Array<typeof paymentBatchItems.$inferSelect>,
     currentIntakes: Array<typeof paymentIntakes.$inferSelect>,
-    evidence: Array<typeof paymentEvidence.$inferSelect>,
+    evidence: Array<{ paymentIntakeId: number; status: string; finalizedAt: Date | null; fileId: number | null }>,
     executor: DbExecutor,
 ) {
     const borrower = await executor.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, borrowerPublicId)) });
@@ -201,7 +205,7 @@ async function inspectBatchChronology(
     }), ...standalone.map(({ intake }) => ({ itemId: intake.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt?.toISOString() ?? null, status: intake.status }))];
     const incoming: ChronologyItem[] = currentItems.flatMap((item) => {
         const intake = currentIntakes.find((candidate) => candidate.id === item.paymentIntakeId);
-        return intake ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), evidenceReady: !intake.evidenceRequired || evidence.some((entry) => entry.paymentIntakeId === intake.id && entry.status === "ready" && entry.finalizedAt !== null) }] : [];
+        return intake ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), evidenceReady: !intake.evidenceRequired || evidence.some((entry) => entry.paymentIntakeId === intake.id && entry.status === "ready" && entry.finalizedAt !== null && entry.fileId !== null) }] : [];
     });
     return evaluatePaymentChronology({ now: new Date().toISOString(), borrowerId: borrower.publicId, pending, incoming });
 }
@@ -221,6 +225,7 @@ export async function createPaymentBatch(ctx: CommandContext, input: { idempoten
         borrowerId = borrower.id;
     }
     const created = await db.transaction(async (tx) => {
+        await lockPaymentWorkflowTenant(ctx, tx);
         const row = await tx.insert(paymentBatches).values({ tenantId: ctx.tenantId, borrowerId, status: borrowerId ? "draft" : "needs_review", version: 0, stateHash: digest({ borrowerPublicId: input.borrowerPublicId ?? null, items: [] }), createIdempotencyKey: key, notes: input.notes ?? null, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
         await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_batch", entityId: row.publicId, action: "created", payload: { batchPublicId: row.publicId } });
         return row;
@@ -709,8 +714,8 @@ export async function finalizePaymentBatchEvidenceMany(ctx: CommandContext, batc
     const results = await Promise.all(items.map(async (item) => ({ batchItemPublicId: item.batchItemPublicId, paymentIntakePublicId: item.paymentIntakePublicId, ...(await finalizePaymentEvidence(ctx, item.paymentIntakePublicId, item.evidencePublicId, gateway)) })));
     const batch = await accessibleBatch(ctx, batchPublicId);
     const members = await db.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id)));
-    const evidence = members.length ? await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, members.map((member) => member.paymentIntakeId)))) : [];
-    return { batchPublicId, allEvidenceReady: members.every((member) => evidence.some((entry) => entry.paymentIntakeId === member.paymentIntakeId && entry.status === "ready")), items: results };
+    const effective = await Promise.all(members.map(async (member) => [member.paymentIntakeId, await effectiveReadyPaymentEvidence(ctx.tenantId, member.paymentIntakeId)] as const));
+    return { batchPublicId, allEvidenceReady: members.every((member) => (effective.find(([id]) => id === member.paymentIntakeId)?.[1].length ?? 0) > 0), items: results };
 }
 export async function cancelPaymentBatch(ctx: CommandContext, batchPublicId: string, input: { reason: string; revision: number; idempotencyKey: string } = { reason: "legacy cancellation", revision: -1, idempotencyKey: `legacy-cancel:${batchPublicId}` }) {
     const batch = await accessibleBatch(ctx, batchPublicId);
@@ -718,6 +723,7 @@ export async function cancelPaymentBatch(ctx: CommandContext, batchPublicId: str
     if (!reason || reason.length > 2000 || !input.idempotencyKey.trim() || !Number.isInteger(input.revision) || input.revision < -1) throw new DomainError("INVALID_BATCH_CANCEL", "Cancellation needs a reason, current revision and idempotency key", 400);
     const requestHash = digest({ batchPublicId, reason, revision: input.revision });
     const updated = await db.transaction(async (tx) => {
+        await lockPaymentWorkflowTenant(ctx, tx);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:batch-cancel:${input.idempotencyKey.trim()}`}, 0))`);
         const membersBeforeLock = await tx.select({ paymentIntakeId: paymentBatchItems.paymentIntakeId }).from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id))).orderBy(asc(paymentBatchItems.id));
         const borrowerIds = new Set<number>();
@@ -795,8 +801,9 @@ export async function decidePaymentBatch(ctx: CommandContext, batchPublicId: str
     });
 }
 export type PreviewPaymentBatchInput = { borrowerPublicId: string; allocations?: Array<ExplicitBatchAllocation>; decisionPublicId?: string };
-export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: string, input: PreviewPaymentBatchInput) {
-    return db.transaction(async (db) => {
+export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: string, input: PreviewPaymentBatchInput, executor?: DbExecutor) {
+    const run = async (db: DbExecutor) => {
+    await lockPaymentWorkflowTenant(ctx, db);
     requireId(input.borrowerPublicId, "borrowerPublicId");
     const batchForResolution = await accessibleBatch(ctx, batchPublicId, db);
     const stagedForResolution = await db.select().from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.batchId, batchForResolution.id)));
@@ -826,8 +833,11 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     if (!items.length) throw new DomainError("BATCH_ITEMS_REQUIRED", "Payment batch must contain at least one item", 409);
     await assertBatchStagingComplete(ctx, batch, db);
     const intakes = await db.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, items.map((item) => item.paymentIntakeId))));
-    const evidence = await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, items.map((item) => item.paymentIntakeId))));
     for (const intake of intakes) await assertPaymentEvidenceReady(db, ctx.tenantId, intake);
+    const evidence = (await Promise.all(items.map(async (item) => {
+        const rows = (await effectivePaymentEvidence(ctx.tenantId, [item.paymentIntakeId], db)).get(item.paymentIntakeId) ?? [];
+        return rows.map((row) => ({ paymentIntakeId: item.paymentIntakeId, status: row.status, finalizedAt: row.finalizedAt, fileId: row.fileId }));
+    }))).flat();
     const evidenceReady = true;
     const loansForBorrower = await db.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.borrowerId, targetBorrowers.map((row) => row.id)), eq(loans.status, "active")));
     const schedules = loansForBorrower.length ? await db.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), inArray(loanSchedules.loanId, loansForBorrower.map((loan) => loan.id)))) : [];
@@ -954,9 +964,10 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     })();
     const publicAllocations = solved.allocations.map((allocation) => ({ ...allocation, calculatedComponents: componentsByAllocation.get(allocation)! }));
     return { id: created.publicId, publicId: created.publicId, batchPublicId: batch.publicId, version: created.version, status, stateHash, previewHash, confirmationHash, evidenceReady, allocations: publicAllocations, candidates: solved.candidates, warnings: solved.warnings };
-    });
+    };
+    return executor ? run(executor) : db.transaction(run);
 }
-export type PaymentBatchExecutionOptions = { afterStage?: (stage: "locks" | "preview" | "item" | "all") => Promise<void> | void };
+export type PaymentBatchExecutionOptions = { afterStage?: (stage: "locks" | "preview" | "item" | "all") => Promise<void> | void; executor?: DbExecutor };
 
 export async function executePaymentBatch(ctx: CommandContext, batchPublicId: string, input: { previewPublicId: string; previewHash: string; confirmationHash: string; confirmed: true; idempotencyKey: string }, options: PaymentBatchExecutionOptions = {}) {
     const batch = await accessibleBatch(ctx, batchPublicId);
@@ -965,6 +976,7 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
     const requestHash = digest({ batchPublicId, ...input });
     requireId(input.previewPublicId, "previewPublicId");
     const run = async (tx: DbExecutor) => {
+        await lockPaymentWorkflowTenant(ctx, tx);
         const selected = await tx.query.paymentBatchPreviews.findFirst({ where: and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.batchId, batch.id), eq(paymentBatchPreviews.publicId, input.previewPublicId)) });
         const selectedAllocations = selected ? await tx.select().from(paymentBatchAllocations).where(and(eq(paymentBatchAllocations.tenantId, ctx.tenantId), eq(paymentBatchAllocations.previewId, selected.id))) : [];
         const initialBorrowerIds = [...new Set([...(batch.borrowerId === null ? [] : [batch.borrowerId]), ...selectedAllocations.map((row) => row.borrowerId)])].sort((a, b) => a - b);
@@ -1014,7 +1026,11 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
             tx.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), inArray(loanSchedules.id, scheduleIds))),
             tx.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, items.map((item) => item.paymentIntakeId)))),
         ]);
-        const evidenceRows = await tx.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, items.map((item) => item.paymentIntakeId))));
+        const effectiveRows = await Promise.all(items.map(async (item) => {
+            const rows = (await effectivePaymentEvidence(ctx.tenantId, [item.paymentIntakeId], tx)).get(item.paymentIntakeId) ?? [];
+            return rows.map((row) => ({ paymentIntakeId: item.paymentIntakeId, status: row.status, finalizedAt: row.finalizedAt, fileId: row.fileId }));
+        }));
+        const evidenceRows = effectiveRows.flat();
         const chronologyResults = await Promise.all(borrowerRows.map(async (borrower) => {
             const borrowerItems = items.filter((item) => allocationRows.some((allocation) => allocation.itemId === item.id && allocation.borrowerId === borrower.id));
             if (!borrowerItems.length) return null;
@@ -1047,7 +1063,7 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
         await options.afterStage?.("all");
         return presentExecutionReceipt(await recordOperation(tx, ctx, updated, null, "batch.execute", input.idempotencyKey, requestHash, { batchPublicId: updated.publicId, status: "posted", posted, auditPublicIds: [audit.publicId] }));
     };
-    return db.transaction(run);
+    return options.executor ? run(options.executor) : withPaymentWorkflowTransaction(run);
 }
 
 export type { BatchObligation, BatchSlip };

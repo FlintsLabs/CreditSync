@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-d816cad8ed74b1d2",
   "profile": "core-read",
-  "toolCount": 37,
+  "toolCount": 38,
   "tools": [
     "borrower.resolve-and-portfolio",
     "loan.inspect-context",
@@ -13,11 +13,11 @@
     "borrower.portfolio",
     "intake.get",
     "intake.list",
+    "payment.replacement.inspect",
     "payment.batch.get",
     "payment.batch.workspace",
     "payment.batch.candidates",
     "loan.preview",
-    "loan.cancel.preview",
     "loan.interest-rate.list",
     "loan.disbursement.list",
     "loan.contract.get",
@@ -40,6 +40,7 @@
     "funding-allocation.list",
     "payment.reverse-with-accrual.preview",
     "payment.reconcile.preflight",
-    "workflow.resolve"
+    "workflow.resolve",
+    "tool.catalog.search"
   ]
 }

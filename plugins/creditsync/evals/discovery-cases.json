@@ -1,0 +1,194 @@
+{
+  "schemaVersion": "1.0",
+  "source": "backend MCP catalog and guidance registry",
+  "cases": [
+    {
+      "caseId": "thai-deferral",
+      "query": "เลื่อนงวดที่ยังไม่จ่ายไปท้ายตาราง",
+      "profile": "loans",
+      "expectedCandidates": [
+        "loan.schedule.defer"
+      ],
+      "forbiddenCandidates": [
+        "loan.payment-start-date.update",
+        "payment.post"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "english-deferral",
+      "query": "defer an unpaid installment",
+      "profile": "full",
+      "expectedCandidates": [
+        "loan.schedule.defer"
+      ],
+      "forbiddenCandidates": [
+        "loan.payment-start-date.update"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "first-date",
+      "query": "เปลี่ยนวันชำระงวดแรก",
+      "profile": "loans",
+      "expectedCandidates": [
+        "loan.payment-start-date.update"
+      ],
+      "forbiddenCandidates": [
+        "loan.schedule.defer"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "restore-reversed",
+      "query": "restore reversed payment",
+      "profile": "payments",
+      "expectedCandidates": [
+        "payment.restore.create"
+      ],
+      "forbiddenCandidates": [
+        "payment.replacement.create"
+      ],
+      "expectedStatus": "needs_clarification"
+    },
+    {
+      "caseId": "replace-cancelled",
+      "query": "replace cancelled payment",
+      "profile": "payments",
+      "expectedCandidates": [
+        "payment.replacement.inspect"
+      ],
+      "forbiddenCandidates": [
+        "payment.restore.create"
+      ],
+      "expectedStatus": "needs_clarification"
+    },
+    {
+      "caseId": "commission-readonly",
+      "query": "commission reversal preview",
+      "profile": "full",
+      "expectedCandidates": [
+        "loan.commission.reverse"
+      ],
+      "forbiddenCandidates": [
+        "payment.reverse"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "payment-evidence",
+      "query": "payment slip evidence",
+      "profile": "payments",
+      "expectedCandidates": [
+        "payment.evidence-supplement.import-chatgpt-file"
+      ],
+      "forbiddenCandidates": [
+        "loan.disbursement.evidence.import-chatgpt-file"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "payout-evidence",
+      "query": "loan payout evidence",
+      "profile": "disbursements",
+      "expectedCandidates": [
+        "loan.disbursement.evidence.import-chatgpt-file"
+      ],
+      "forbiddenCandidates": [
+        "payment.evidence-supplement.import-chatgpt-file"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "renewal",
+      "query": "renew a daily loan",
+      "profile": "loans",
+      "expectedCandidates": [
+        "renewal.preview"
+      ],
+      "forbiddenCandidates": [
+        "loan.replacement.preview"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "replacement",
+      "query": "replace active loan with funded draft",
+      "profile": "loans",
+      "expectedCandidates": [
+        "loan.replacement.preview"
+      ],
+      "forbiddenCandidates": [
+        "renewal.preview"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "unknown",
+      "query": "make me a sandwich",
+      "profile": "full",
+      "expectedCandidates": [],
+      "forbiddenCandidates": [
+        "payment.post"
+      ],
+      "expectedStatus": "no_match"
+    },
+    {
+      "caseId": "ambiguous-cancel",
+      "query": "cancel loan",
+      "profile": "loans",
+      "expectedCandidates": [
+        "loan.cancel.preview",
+        "loan.cancel.execute"
+      ],
+      "forbiddenCandidates": [],
+      "expectedStatus": "needs_clarification"
+    },
+    {
+      "caseId": "hidden-deferral",
+      "query": "defer an unpaid installment",
+      "profile": "discovery",
+      "expectedCandidates": [],
+      "forbiddenCandidates": [
+        "loan.schedule.defer"
+      ],
+      "expectedStatus": "connection_required"
+    },
+    {
+      "caseId": "stale-guidance",
+      "query": "defer an unpaid installment",
+      "profile": "loans",
+      "knownGuidanceVersion": "stale-guidance",
+      "expectedCandidates": [],
+      "forbiddenCandidates": [
+        "loan.schedule.defer"
+      ],
+      "expectedStatus": "refresh_required"
+    },
+    {
+      "caseId": "paid-payment-late-evidence",
+      "query": "payment.evidence-supplement.import-chatgpt-file",
+      "profile": "payments",
+      "expectedCandidates": [
+        "payment.evidence-supplement.import-chatgpt-file"
+      ],
+      "forbiddenCandidates": [
+        "payment.post",
+        "payment.restore.create"
+      ],
+      "expectedStatus": "matches"
+    },
+    {
+      "caseId": "scheduled-settlement",
+      "query": "loan.settlement.preview",
+      "profile": "loans",
+      "expectedCandidates": [
+        "loan.settlement.preview"
+      ],
+      "forbiddenCandidates": [
+        "loan.restructure.preview"
+      ],
+      "expectedStatus": "matches"
+    }
+  ]
+}

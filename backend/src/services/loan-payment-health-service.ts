@@ -121,7 +121,7 @@ export async function getLoanPaymentHealth(
         // A contract that deducted the first weekly period collects each later
         // anchored period in advance.  Surface that full contractual amount on
         // its start date, using the same allocation provenance as posting.
-        if (loan.advanceInterestPeriods === 1) {
+        if (loan.advanceInterestPeriods === 1 && !dailyPolicy) {
             const advanceRow = balances.rows.find((row) => row.periodStartDate !== null
                 && row.periodEndDate !== null
                 && row.periodStartDate !== loan.interestPeriodAnchorDate

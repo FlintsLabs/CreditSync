@@ -2,13 +2,94 @@ import { describe, expect, test } from "bun:test";
 import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, type ResolverProfile } from "./workflow-resolver";
 import { MCP_TOOL_NAMES } from "./catalog-types";
 import { toolIsVisibleInProfile, WORKFLOW_REGISTRY, WORKFLOW_TOOL_INVENTORY, WORKFLOW_VERSION } from "./workflow-registry";
-import { advertisedMcpToolMetadata, toolInputSchemas } from "./server";
+import { advertisedMcpToolMetadata, toolDataSchemas, toolInputSchemas } from "./server";
+import { toolNamesForProfile } from "./tool-profiles";
 
 const catalogVersion = "mcp-catalog-test";
 const target = { kind: "payment_intake" as const, publicId: "0198c481-3e2b-7000-8000-000000000001" };
-const base = { profile: "payments" as const, catalogVersion, workflowVersion: WORKFLOW_VERSION };
+const base = { profile: "payments" as const, catalogVersion, workflowVersion: WORKFLOW_VERSION, catalog: advertisedMcpToolMetadata() };
 
 describe("workflow resolver policy", () => {
+    test("deferral asks for an exact schedule, then returns review data and confirmation inputs without confirming", () => {
+        const loanTarget = { kind: "loan" as const, publicId: "0198c481-3e2b-7000-8000-000000000001" };
+        const missing = resolveWorkflowPolicy({ intent: "defer_installment", profile: "loans", target: loanTarget, attachments: "none" }, { targetAvailable: true, identityResolved: true }, { profile: "loans", catalogVersion });
+        expect(missing.status).toBe("next_step");
+        expect(missing.blockers).toContain("SCHEDULE_SELECTION_REQUIRED");
+        expect(missing.nextSteps[0]).toMatchObject({ toolName: "loan.inspect-context", arguments: { loanPublicId: loanTarget.publicId } });
+
+        const review = { eligible: true, sourceDueDate: "2026-08-10", replacementDueDate: "2026-08-12", scheduledPrincipal: "90.00", scheduledInterest: "8.00", scheduledFee: "2.00", scheduledTotal: "100.00" };
+        const ready = resolveWorkflowPolicy({ intent: "defer_installment", profile: "loans", target: loanTarget, schedulePublicId: "0198c481-3e2b-7000-8000-000000000002", attachments: "none" }, { targetAvailable: true, identityResolved: true, scheduleDeferralEligible: true, scheduleDeferral: review }, { profile: "loans", catalogVersion });
+        expect(ready.status).toBe("confirmation_required");
+        expect(ready.nextSteps[0]).toMatchObject({ toolName: "loan.schedule.defer", arguments: { loanPublicId: loanTarget.publicId, schedulePublicId: "0198c481-3e2b-7000-8000-000000000002" }, requiredInputs: ["reason", "idempotencyKey", "confirmed"], requiresConfirmation: true });
+        expect(ready.observed.scheduleDeferral).toEqual(review);
+        expect(ready.nextSteps[0]?.arguments).not.toHaveProperty("confirmed");
+        expect(toolDataSchemas["workflow.resolve"].safeParse(ready).success).toBe(true);
+    });
+
+    test("deferral stops on ineligible or inaccessible selection and is unavailable on payment profile", () => {
+        const loanTarget = { kind: "loan" as const, publicId: "0198c481-3e2b-7000-8000-000000000001" };
+        const selected = "0198c481-3e2b-7000-8000-000000000002";
+        const blocked = resolveWorkflowPolicy({ intent: "defer_installment", profile: "loans", target: loanTarget, schedulePublicId: selected, attachments: "none" }, { targetAvailable: true, identityResolved: true, scheduleDeferralEligible: false, scheduleDeferralBlockedReason: "SCHEDULE_NOT_FULLY_UNPAID" }, { profile: "loans", catalogVersion });
+        expect(blocked.status).toBe("blocked");
+        expect(blocked.nextSteps).toHaveLength(0);
+        expect(blocked.blockers).toContain("SCHEDULE_NOT_FULLY_UNPAID");
+        const hidden = resolveWorkflowPolicy({ intent: "defer_installment", profile: "payments", target: loanTarget, schedulePublicId: selected }, { targetAvailable: true, identityResolved: true }, { profile: "payments", catalogVersion });
+        expect(hidden.status).toBe("connection_required");
+        for (const blockedReason of ["FLOATING_LOAN", "LOAN_NOT_ACTIVE", "SCHEDULE_UNAVAILABLE"] as const) {
+            const ineligible = resolveWorkflowPolicy({ intent: "defer_installment", profile: "loans", target: loanTarget, schedulePublicId: selected, attachments: "none" }, { targetAvailable: true, identityResolved: true, scheduleDeferralEligible: false, scheduleDeferralBlockedReason: blockedReason }, { profile: "loans", catalogVersion });
+            expect(ineligible.status).toBe("blocked");
+            expect(ineligible.blockers).toContain(blockedReason);
+            expect(ineligible.nextSteps).toHaveLength(0);
+        }
+    });
+
+    test("emits schema-valid UUID arrays for identity review participants", () => {
+        const first = "0198c481-3e2b-7000-8000-000000000001";
+        const second = "0198c481-3e2b-7000-8000-000000000002";
+        const resolved = resolveWorkflowPolicy(
+            { intent: "receive_payment", profile: "full", target: { kind: "payment_intake", publicId: first }, attachments: "none" },
+            { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true, duplicateReviewRequired: true, identityDecisionRequired: true, duplicateBlockerPublicIds: [second] },
+            { profile: "full", catalogVersion },
+        );
+        expect(resolved.nextSteps[0]?.arguments).toEqual({ participantPaymentIntakePublicIds: [first, second] });
+        expect(toolInputSchemas["payment.identity-decision.preview"].safeParse({
+            ...resolved.nextSteps[0]?.arguments,
+            decision: "same_payment", reason: "reviewed", idempotencyKey: "resolver-test",
+        }).success).toBe(true);
+    });
+
+    test.each([
+        ["membership-only", { duplicateReviewRequired: true, identityDecisionRequired: true }],
+        ["sixty-second mismatch", { duplicateReviewRequired: true, identityDecisionRequired: true }],
+        ["mutable candidate", { duplicateReviewRequired: true, identityDecisionRequired: true }],
+    ])("routes %s identity observations to a legal typed decision step", (_name, flags) => {
+        const second = "0198c481-3e2b-7000-8000-000000000002";
+        const resolved = resolveWorkflowPolicy(
+            { intent: "receive_payment", profile: "full", target, attachments: "none" },
+            { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true, duplicateBlockerPublicIds: [second], ...flags },
+            { profile: "full", catalogVersion },
+        );
+        const next = resolved.nextSteps[0]!;
+        expect(resolved.status).toBe("next_step");
+        expect(next.toolName).toBe("payment.identity-decision.preview");
+        expect(Array.isArray(next.arguments.participantPaymentIntakePublicIds)).toBe(true);
+        expect(toolInputSchemas["payment.identity-decision.preview"].safeParse({
+            ...next.arguments, decision: "same_payment", reason: "identity decision", idempotencyKey: "resolver-typed-values",
+        }).success).toBe(true);
+        expect(resolved.nextSteps.some((step) => step.toolName === "payment.replacement.duplicate-review.preview")).toBe(false);
+    });
+
+    test("routes a mutable duplicate to identity decision before ordinary payment preview", () => {
+        const second = "0198c481-3e2b-7000-8000-000000000002";
+        const resolved = resolveWorkflowPolicy(
+            { intent: "receive_payment", profile: "full", target, attachments: "none" },
+            { targetAvailable: true, identityResolved: true, state: "mutable", evidenceReady: true, duplicateReviewRequired: true, identityDecisionRequired: true, duplicateBlockerPublicIds: [second] },
+            { profile: "full", catalogVersion },
+        );
+        expect(resolved.nextSteps[0]?.toolName).toBe("payment.identity-decision.preview");
+        expect(resolved.nextSteps.some((step) => step.toolName === "payment.preview")).toBe(false);
+        expect(resolved.prohibitedTools).toContain("payment.preview");
+    });
     test("does not route scheduled close-out to floating settlement", () => {
         const resolved = resolveWorkflowPolicy({ intent: "close_loan", profile: "loans", target: { kind: "loan", publicId: target.publicId }, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable", loanType: "scheduled", evidenceReady: true }, { ...base, profile: "loans" });
         expect(resolved.nextSteps.some((step) => step.toolName === "loan.settlement.preview")).toBe(false);
@@ -27,6 +108,23 @@ describe("workflow resolver policy", () => {
         const resolved = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "present", expectedAttachmentCount: 1 }, { targetAvailable: true, identityResolved: true, state: "posted", evidenceReady: true }, base);
         expect(resolved).toMatchObject({ status: "confirmation_required", nextSteps: [{ toolName: "payment.evidence-supplement.import-chatgpt-file" }] });
         expect(resolved.prohibitedTools).not.toContain("payment.post");
+    });
+
+    test.each(["duplicate", "reversed"] as const)("does not route %s payment back into posting", (state) => {
+        const resolved = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "none" }, { targetAvailable: true, identityResolved: true, state, evidenceReady: true }, base);
+        expect(resolved.status).toBe("needs_input");
+        expect(resolved.nextSteps).toHaveLength(0);
+        expect(resolved.prohibitedTools).not.toContain("payment.evidence-supplement.record");
+    });
+
+    test("routes a cancelled intake to replacement inspection, including a replacement child target safely", () => {
+        const cancelled = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true }, base);
+        expect(cancelled).toMatchObject({ status: "next_step", nextSteps: [{ toolName: "payment.replacement.inspect" }] });
+        const cancelledWithUpload = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "present", expectedAttachmentCount: 1 }, { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true }, base);
+        expect(cancelledWithUpload).toMatchObject({ status: "next_step", nextSteps: [{ toolName: "payment.replacement.inspect" }] });
+        const child = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable", evidenceRequired: true, evidenceReady: true }, base);
+        expect(child.nextSteps.some((step) => step.toolName === "payment.preview")).toBe(true);
+        expect(child.nextSteps.some((step) => step.toolName === "evidence.prepare")).toBe(false);
     });
 
     test("fails closed for unavailable attachment or missing identity", () => {
@@ -126,13 +224,43 @@ describe("workflow resolver policy", () => {
         expect(resolved.nextSteps.every((step) => Object.values(step.arguments).every((value) => value === target.publicId))).toBe(true);
     });
 
-    test("provides bounded inspect guidance and refuses arbitrary financial tool help", () => {
+    test("provides inspect guidance and complete documentation for visible write tools without executable steps", () => {
         const inspect = resolveWorkflowPolicy({ intent: "inspect", ...base, target, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable" }, base);
         expect(inspect).toMatchObject({ status: "next_step", nextSteps: [{ toolName: "intake.get", arguments: { paymentIntakePublicId: target.publicId } }] });
         const help = resolveWorkflowPolicy({ intent: "tool_help", ...base, target, toolName: "payment.post" }, { targetAvailable: true, identityResolved: true, state: "mutable" }, base);
         expect(help.status).toBe("needs_input");
         expect(help.nextSteps).toHaveLength(0);
-        expect(help.prohibitedTools).toContain("payment.post");
+        expect(help.toolHelp).toMatchObject({ toolName: "payment.post", requiresHumanConfirmation: true, requiredInputs: ["paymentIntakePublicId", "proposalPublicId"] });
+        expect(Object.keys(help.toolHelp!)).toEqual(["toolName", "guidanceVersion", "purpose", "whenToUse", "prerequisites", "sideEffects", "retrySafety", "commonErrors", "requiresHumanConfirmation", "requiredInputs", "relatedTools"]);
+        expect(help.nextSteps).toHaveLength(0);
+    });
+
+    test("returns named documentation for every visible discovery tool and rejects stale help versions", () => {
+        const names = toolNamesForProfile("discovery");
+        const catalog = advertisedMcpToolMetadata();
+        for (const name of names) {
+            const resolved = resolveWorkflowPolicy({ intent: "tool_help", profile: "discovery", toolName: name }, {}, { profile: "discovery", catalogVersion, catalog });
+            expect(resolved.toolHelp?.toolName).toBe(name);
+            expect(resolved.toolHelp?.relatedTools.every((related) => names.includes(related as typeof name))).toBe(true);
+        }
+        const stale = resolveWorkflowPolicy({ intent: "tool_help", profile: "discovery", toolName: "tool.catalog.search", knownGuidanceVersion: "old" }, {}, { profile: "discovery", catalogVersion, catalog });
+        expect(stale).toMatchObject({ status: "refresh_required", nextSteps: [], blockers: ["GUIDANCE_VERSION_STALE"] });
+        expect(stale.toolHelp).toBeUndefined();
+    });
+
+    test("every catalog tool visible on every profile has complete filtered named help", () => {
+        const catalog = advertisedMcpToolMetadata();
+        for (const profile of ["full", "core-read", "payments", "loans", "disbursements", "admin", "discovery"] as const) {
+            const visible = toolNamesForProfile(profile);
+            for (const toolName of visible) {
+                const help = resolveWorkflowPolicy({ intent: "tool_help", profile, toolName }, {}, { profile, catalogVersion, catalog });
+                expect(help.toolHelp?.toolName).toBe(toolName);
+                const required = catalog.find((tool) => tool.name === toolName)!.inputSchema.required as string[] | undefined;
+                expect(help.toolHelp?.requiredInputs).toEqual(required ?? []);
+                expect(help.toolHelp?.relatedTools.every((related) => visible.includes(related as typeof toolName))).toBe(true);
+                expect(help.toolHelp?.purpose.length).toBeGreaterThan(0);
+            }
+        }
     });
 
     test("uses the target-bound borrower resolver input without a query", () => {

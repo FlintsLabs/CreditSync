@@ -16,7 +16,7 @@ import {
 import { loansRoute } from "../modules/loans";
 import type { LoanPaymentHealth } from "../lib/loan-payment-health";
 import type { CommandContext } from "./command-context";
-import { getLoanContract } from "./loan-application-service";
+import { activateLoan, createLoanDraft, getLoanApplication, getLoanContract } from "./loan-application-service";
 import { getLoanListLegacyPaymentHealth, getLoanPaymentHealth } from "./loan-payment-health-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -62,6 +62,88 @@ async function authToken(user: { id: number; email: string; role: string | null;
 describe("loan payment-health service", () => {
     if (integrationEnabled) beforeEach(resetTables);
     afterEach(() => setSystemTime());
+
+    async function seedDailyAdvanceLoan(periodUnit: "day" | "week" = "day") {
+        const { actor, borrower } = await seedActorAndBorrower("tenant-daily-advance");
+        const ctx = context(actor);
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId, principal: "4000.00", interestRate: "0.00",
+            repaymentType: "floating", termMonths: 1, startDate: "2026-09-24",
+            floatingInterestPolicy: {
+                periodUnit, periodLength: 1, rateMode: "percent", rate: "2.0000",
+                advanceInterestPeriods: 1, advanceInterestRefundPolicy: "non_refundable",
+            },
+        });
+        await activateLoan({ ...ctx, idempotencyKey: "activate-daily-advance" }, draft.publicId);
+        const loan = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        return { actor, ctx, loan: loan! };
+    }
+
+    // Break caught: daily advance collection adds a second copy of today's interest.
+    integrationTest("counts today's daily advance interest once", async () => {
+        const { ctx, loan } = await seedDailyAdvanceLoan();
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-10-07T12:00:00+07:00"), context: ctx,
+        })).toMatchObject({ dueTodayAmount: "80.00", overdueAmount: "960.00", overdueItemCount: 12 });
+    });
+
+    // Break caught: the detail table omits unmaterialized days or writes ledger rows during a read.
+    integrationTest("shows every accrued day in loan detail without materializing financial records", async () => {
+        setSystemTime(new Date("2026-10-07T12:00:00+07:00"));
+        const { actor, ctx, loan } = await seedDailyAdvanceLoan();
+        const storedBefore = await db.select().from(loanInterestAccruals);
+        const auditBefore = await db.select().from(auditLogs);
+        const response = await new Elysia().use(loansRoute).handle(new Request(`http://localhost/loans/${loan.publicId}`, {
+            headers: { authorization: `Bearer ${await authToken(actor)}` },
+        }));
+        expect(response.status).toBe(200);
+        const detail = await response.json();
+        expect(detail.accruals).toHaveLength(14);
+        expect(detail.accruals[0]).toMatchObject({ accrualDate: "2026-09-24", interestAmount: "80.00", paidAmount: "80.00", remainingAmount: "0.00", status: "paid" });
+        expect(detail.accruals[13]).toMatchObject({ accrualDate: "2026-10-07", interestAmount: "80.00", paidAmount: "0.00", remainingAmount: "80.00" });
+        expect(new Set(detail.accruals.map((row: { accrualDate: string }) => row.accrualDate)).size).toBe(14);
+        expect(detail.outstandingInterest).toBe("1040.00");
+        expect(await db.select().from(loanInterestAccruals)).toEqual(storedBefore);
+        expect(await db.select().from(auditLogs)).toEqual(auditBefore);
+        // MCP contract IDs continue to identify persisted records only.
+        expect((await getLoanContract(ctx, loan.publicId)).accruals).toHaveLength(1);
+        setSystemTime(new Date("2026-10-08T00:00:01+07:00"));
+        const tomorrow = await new Elysia().use(loansRoute).handle(new Request(`http://localhost/loans/${loan.publicId}`, {
+            headers: { authorization: `Bearer ${await authToken(actor)}` },
+        }));
+        const nextDetail = await tomorrow.json();
+        expect(nextDetail.accruals).toHaveLength(15);
+        expect(nextDetail.accruals[14].accrualDate).toBe("2026-10-08");
+        expect(nextDetail.outstandingInterest).toBe("1120.00");
+        expect(await db.select().from(loanInterestAccruals)).toEqual(storedBefore);
+    });
+
+    integrationTest("retains prepaid future snapshots and reversed accrual history in the projected table", async () => {
+        const { ctx, loan } = await seedDailyAdvanceLoan("week");
+        const [first] = await db.select().from(loanInterestAccruals);
+        const [reversed] = await db.insert(loanInterestAccruals).values({
+            ...first!, id: undefined, publicId: undefined, status: "reversed", paidAmount: "0.00",
+        }).returning();
+        const storedBefore = await db.select().from(loanInterestAccruals);
+        const detail = await getLoanApplication(ctx, loan.publicId, {
+            projectedAccrualsAsOf: new Date("2026-09-26T12:00:00+07:00"),
+        });
+        expect(detail.accruals).toHaveLength(8);
+        expect(detail.accruals.find((row) => row.publicId === reversed!.publicId)?.status).toBe("reversed");
+        expect(detail.accruals.filter((row) => row.status === "paid")).toHaveLength(7);
+        expect(detail.accruals.at(-1)?.accrualDate).toBe("2026-09-30");
+        expect(await db.select().from(loanInterestAccruals)).toEqual(storedBefore);
+    });
+
+    integrationTest("does not project new interest days after a loan is closed", async () => {
+        const { ctx, loan } = await seedDailyAdvanceLoan();
+        await db.update(loans).set({ status: "closed" }).where(eq(loans.id, loan.id));
+        const detail = await getLoanApplication(ctx, loan.publicId, {
+            projectedAccrualsAsOf: new Date("2026-10-07T12:00:00+07:00"),
+        });
+        expect(detail.accruals).toHaveLength(1);
+        expect(detail.outstandingInterest).toBe("0.00");
+    });
 
     // Break caught: schedule aggregation omits tenant scope or merges due-now with arrears.
     integrationTest("loads only the selected loan tenant schedule and separates due-now", async () => {
@@ -182,7 +264,7 @@ describe("loan payment-health service", () => {
         expect(list.paymentHealth).toMatchObject({ overdueAmount: "15.00", overdueItemCount: 1, maxOverdueDays: 1 });
         expect(detail.paymentHealth).toEqual(list.paymentHealth);
         expect(contract.paymentHealth).toEqual(list.paymentHealth);
-        expect(detail.outstandingInterest).toBe("0.00");
+        expect(detail.outstandingInterest).toBe("30.00");
         expect(await db.select({ outstandingInterest: loans.outstandingInterest }).from(loans).where(eq(loans.id, loan.id))).toEqual(before);
     });
 

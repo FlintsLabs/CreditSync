@@ -14,10 +14,12 @@ import { persistMcpDiagnosticBestEffort } from "../services/mcp-diagnostic-servi
 import { mcpDiagnosticCategories, mcpDiagnosticStages, safeDiagnosticRuntimeCategories } from "../lib/mcp-diagnostic-types";
 import { createModernMcpHandler, isLegacyRequest } from "./modern";
 import { toolsForProfile, toolNamesForProfile } from "./tool-profiles";
-import { MCP_TOOL_NAMES, type McpToolDefinition, type McpToolName, type ToolProfile } from "./catalog-types";
+import { MCP_TOOL_NAMES, TOOL_PROFILE_NAMES, type McpToolDefinition, type McpToolName, type ToolProfile } from "./catalog-types";
 import { createHash } from "node:crypto";
 import { decodeCatalogCursor, encodeCatalogCursor, MCP_PAGE_SIZE } from "./catalog-pagination";
 import { WORKFLOW_VERSION } from "./workflow-registry";
+import { describeTool, MCP_SERVER_INSTRUCTIONS, TOOL_GUIDANCE_VERSION } from "./tool-guidance";
+import { searchToolCatalog } from "./tool-catalog-search";
 
 export { MCP_TOOL_NAMES } from "./catalog-types";
 export type { McpToolName, ToolProfile } from "./catalog-types";
@@ -296,13 +298,17 @@ const intakeOutput = z.object({
     updatedAt: nullableIsoDateTime.optional(),
     repostOfIntakePublicId: uuid.nullable(),
     repostedByIntakePublicId: uuid.nullable(),
+    replacementOfIntakePublicId: uuid.nullable().optional(),
+    replacedByIntakePublicId: uuid.nullable().optional(),
+    replacementEligibility: z.object({ allowed: z.boolean(), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), blockers: z.array(z.string()), blockerPublicIds: z.array(uuid).optional(), replacementPaymentIntakePublicId: uuid.nullable(), lineagePublicId: uuid.nullable().optional() }).nullable().optional(),
+    evidenceRequirement: z.object({ expectedCount: z.number().int().nonnegative(), authoritativeAttemptCount: z.number().int().nonnegative(), readyCount: z.number().int().nonnegative() }).nullable().optional(),
     cancellationMetadata: z.object({ reason: z.string().nullable(), cancelledAt: nullableIsoDateTime, auditPublicId: uuid.nullable(), actorPublicId: uuid.nullable() }).nullable().optional(),
 }).strict();
 const paymentEvidenceOutput = z.object({
     ...publicEntity,
     status: z.string(),
     mimeType: z.string(),
-    size: z.number().int(),
+    size: z.number().int().nullable(),
     sha256: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
     filePublicId: uuid.nullable(),
 }).strict();
@@ -311,6 +317,11 @@ const paymentCancellationCapabilityOutput = z.object({
     stateHash: z.string().regex(/^[0-9a-f]{64}$/i),
     blockedReason: z.string().nullable(),
     batchPublicId: uuid.nullable(),
+}).strict();
+const paymentRestoreCancellationCapabilityOutput = z.object({
+    allowed: z.boolean(),
+    stateHash: z.string().regex(/^[0-9a-f]{64}$/i),
+    blockedReason: z.string().nullable(),
 }).strict();
 const paymentCancellationOutput = z.object({
     paymentIntakePublicId: uuid, status: z.literal("cancelled"), reason: z.string(), cancelledAt: isoDateTime,
@@ -556,6 +567,7 @@ const compositeLoanOutput = loanOutput.omit({ accruals: true }).extend({ payment
 const compositePaymentDetailOutput = intakeOutput.extend({
     evidence: z.array(paymentEvidenceOutput),
     cancellation: paymentCancellationCapabilityOutput,
+    restoreCancellation: paymentRestoreCancellationCapabilityOutput.nullable(),
 }).strict();
 const compositeProposalOutput = proposalOutput.omit({ allocations: true }).extend({
     allocations: compositePageOutput(proposalAllocationOutput),
@@ -1171,10 +1183,28 @@ const workflowResolverOutput = z.object({
     catalogVersion: z.string().trim().min(1).max(160),
     policyRevision: z.string().trim().min(1).max(160),
     observed: z.object({
-        state: z.enum(["unresolved", "mutable", "posted"]).nullable(),
+        state: z.enum(["unresolved", "mutable", "posted", "cancelled", "duplicate", "reversed"]).nullable(),
         loanType: z.enum(["scheduled", "floating"]).nullable(),
         evidenceReady: z.boolean(),
+        restoreCancellationAllowed: z.boolean().nullable(),
+        restoreCancellationBlockedReason: z.string().nullable(),
+        restoreCancellationStateHash: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
+        paymentBlockers: z.array(z.object({
+            code: z.string().trim().min(1).max(120),
+            intakePublicIds: z.array(uuid).max(20),
+            nextAction: z.enum(["identity_review", "evidence_recovery", "continue_successor", "refresh_preview", "reconciliation", "human_investigation"]),
+            retryable: z.boolean(),
+        }).strict()).max(8),
+        scheduleDeferral: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+        scheduleDeferralEligible: z.boolean().optional(),
+        scheduleDeferralBlockedReason: z.string().max(120).optional(),
     }).strict(),
+    toolHelp: z.object({
+        toolName: z.string().trim().min(1).max(120), guidanceVersion: z.string().trim().min(1).max(120), purpose: z.string(),
+        whenToUse: z.array(z.string()), prerequisites: z.array(z.string()), sideEffects: z.array(z.string()), retrySafety: z.string(),
+        commonErrors: z.array(z.object({ code: z.string(), recovery: z.string() }).strict()), requiresHumanConfirmation: z.boolean(),
+        requiredInputs: z.array(z.string()), relatedTools: z.array(z.string()),
+    }).strict().optional(),
     status: z.enum(["needs_input", "next_step", "confirmation_required", "blocked", "refresh_required", "connection_required"]),
     nextSteps: z.array(workflowResolverStepOutput).max(3),
     blockers: z.array(z.string().trim().min(1).max(160)).max(8),
@@ -1182,13 +1212,15 @@ const workflowResolverOutput = z.object({
     reevaluateOn: z.enum(["target_change", "evidence_change", "preview_expiry", "version_change"]),
 }).strict();
 const workflowResolverInput = z.object({
-    intent: z.enum(["inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "tool_help"]),
+    intent: z.enum(["inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "cancel_payment_restore", "defer_installment", "tool_help"]),
     target: z.object({ kind: z.enum(["borrower", "loan", "payment_intake", "loan_disbursement"]), publicId: uuid }).strict().optional(),
     attachments: z.enum(["none", "present", "unknown"]).optional(),
     expectedAttachmentCount: z.number().int().min(1).max(20).optional(),
     knownWorkflowVersion: z.string().trim().min(1).max(120).optional(),
     knownCatalogVersion: z.string().trim().min(1).max(160).optional(),
+    knownGuidanceVersion: z.string().trim().min(1).max(120).optional(),
     toolName: z.string().trim().min(1).max(120).optional(),
+    schedulePublicId: uuid.optional(),
 }).strict();
 
 export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
@@ -1229,7 +1261,8 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
         evidence: z.array(paymentEvidenceOutput),
         latestProposal: proposalOutput.nullable(),
         cancellation: paymentCancellationCapabilityOutput,
-    }),
+        restoreCancellation: paymentRestoreCancellationCapabilityOutput.nullable(),
+    }).strict(),
     "payment.match-context": z.object({
         intake: compositePaymentDetailOutput,
         proposal: compositeProposalOutput.nullable(),
@@ -1255,6 +1288,15 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "payment.evidence-supplement.record": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
     "payment.preview": proposalOutput,
     "payment.cancel": paymentCancellationOutput,
+    "payment.restore.cancel": paymentCancellationOutput,
+    "payment.replacement.inspect": z.object({ sourcePaymentIntakePublicId: uuid, allowed: z.boolean(), blockers: z.array(z.string()), blockerDetails: z.array(z.object({ code: z.string(), intakePublicIds: z.array(uuid), nextAction: z.enum(["identity_review", "evidence_recovery", "continue_successor", "refresh_preview", "reconciliation", "human_investigation"]), retryable: z.boolean() }).strict()), blockerPublicIds: z.array(uuid).optional(), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), replacementPaymentIntakePublicId: uuid.nullable(), lineagePublicId: uuid.nullable().optional() }).strict(),
+    "payment.replacement.create": z.object({ sourcePaymentIntakePublicId: uuid, replacementPaymentIntakePublicId: uuid, status: z.literal("draft"), auditPublicId: uuid, correlationId: uuid, lineagePublicId: uuid }).strict(),
+    "payment.replacement.duplicate-review.preview": z.object({ duplicateReviewPublicId: uuid, status: z.literal("previewed"), canonicalPaymentIntakePublicId: uuid, candidatePaymentIntakePublicIds: z.array(uuid).min(1), canonicalEvidenceCandidatePublicIds: z.array(uuid), previewHash: z.string().regex(/^[0-9a-f]{64}$/i), canonicalStateHash: z.string().regex(/^[0-9a-f]{64}$/i), evidenceHash: z.string().regex(/^[0-9a-f]{64}$/i), dependencyHash: z.string().regex(/^[0-9a-f]{64}$/i), expiresAt: isoDateTime, auditPublicId: uuid, correlationId: uuid }).strict(),
+    "payment.replacement.duplicate-review.execute": z.object({ duplicateReviewPublicId: uuid, status: z.literal("executed"), auditPublicId: uuid, correlationId: uuid, executionPublicId: uuid }).strict(),
+    "payment.identity-decision.preview": z.object({ identityDecisionPreviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), participantSnapshotHash: z.string().regex(/^[0-9a-f]{64}$/i), participantPaymentIntakePublicIds: z.array(uuid), participantSnapshots: z.array(z.object({ publicId: uuid, amount: money, payerName: z.string().max(500).nullable(), receivedAt: isoDateTime, timeDifferenceSeconds: z.number().int().nonnegative().max(31_536_000) }).strict()).max(50), decision: z.enum(["same_payment", "distinct_payment"]), expiresAt: isoDateTime, auditPublicId: uuid, correlationId: uuid }).strict(),
+    "payment.identity-decision.execute": z.object({ decisionPublicId: uuid, decision: z.enum(["same_payment", "distinct_payment"]), auditPublicId: uuid, correlationId: uuid }).strict(),
+    "payment.evidence-recovery.preview": z.object({ recoveryPreviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), sourcePaymentIntakePublicId: uuid, requirementFloor: z.number().int().nonnegative(), expectedCount: z.number().int().positive(), reusableEvidenceCount: z.number().int().nonnegative(), existingSuccessorPaymentIntakePublicId: uuid.nullable(), expiresAt: isoDateTime, auditPublicId: uuid, correlationId: uuid }).strict(),
+    "payment.evidence-recovery.execute": z.object({ sourcePaymentIntakePublicId: uuid, recoveryIntakePublicId: uuid, status: z.string(), resumed: z.boolean(), auditPublicId: uuid, correlationId: uuid, executionPublicId: uuid, lineagePublicId: uuid.optional() }).strict(),
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse-with-accrual.preview": z.object({
@@ -1458,6 +1500,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
         accruals: compositePageOutput(loanAccrualOutput).nullable(),
     }).strict(),
     "loan.payment-start-date.update": loanOutput.extend(writeAuditMetadata).strict(),
+    "loan.schedule.defer": z.object({ loanPublicId: uuid, sourceSchedulePublicId: uuid, replacementSchedulePublicId: uuid, sourceStatus: z.literal("deferred"), replacementInstallmentNo: z.number().int().positive(), replacementDueDate: date, scheduledPrincipal: money, scheduledInterest: money, scheduledFee: money, scheduledTotal: money, auditPublicId: uuid, correlationId: uuid }).strict(),
     "loan.payment-history.list": z.object({
         loanPublicId: uuid,
         items: z.array(loanPaymentHistoryItemOutput),
@@ -1511,6 +1554,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "intermediary.disbursement.reverse": intermediatedReverseOutput,
     "intermediary.collection.list": z.object({ items: z.array(z.record(z.string(), z.unknown())) }).strict(),
     "intermediary.collection.create": z.record(z.string(), z.unknown()),
+    "intermediary.collection.cancel": z.record(z.string(), z.unknown()),
     "intermediary.remittance.get": z.record(z.string(), z.unknown()),
     "intermediary.remittance.create": z.record(z.string(), z.unknown()),
     "intermediary.remittance.allocations.save": z.record(z.string(), z.unknown()),
@@ -1534,6 +1578,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "system.error-diagnostic.get": z.object({ correlationId: uuid, items: z.array(diagnosticItemOutput).max(100) }).strict(),
     "system.error-diagnostic.list": z.object({ items: z.array(diagnosticItemOutput).max(100), nextCursor: z.string().nullable() }).strict(),
     "workflow.resolve": workflowResolverOutput,
+    "tool.catalog.search": z.object({ profile: z.enum(TOOL_PROFILE_NAMES), catalogVersion: z.string().max(160), guidanceVersion: z.string().max(160), status: z.enum(["matches", "needs_clarification", "no_match", "connection_required", "refresh_required"]), matches: z.array(z.object({ toolName: z.enum(MCP_TOOL_NAMES), purpose: z.string().max(320), domain: z.enum(["borrowers", "payments", "loans", "disbursements", "intermediaries", "funding", "diagnostics", "discovery"]), whenToUse: z.array(z.string().max(320)).max(8), prerequisites: z.array(z.string().max(320)).max(8), sideEffects: z.array(z.string().max(320)).max(8), retrySafety: z.string().max(320), requiresHumanConfirmation: z.boolean(), relatedTools: z.array(z.enum(MCP_TOOL_NAMES)).max(8) }).strict()).max(10), hasMore: z.boolean(), nextCursor: z.string().max(512).nullable(), requiredProfiles: z.array(z.enum(TOOL_PROFILE_NAMES)).max(6) }).strict(),
 };
 
 export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
@@ -1636,6 +1681,15 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         allocations: z.array(explicitAllocation).max(1_000).optional(),
     }).strict(),
     "payment.cancel": z.object({ paymentIntakePublicId: uuid, reason: cancellationReason, idempotencyKey: z.string().trim().min(1).max(200), expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/i) }).strict(),
+    "payment.restore.cancel": z.object({ restoreDraftPublicId: uuid, expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/i), reason: cancellationReason, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.replacement.inspect": z.object({ paymentIntakePublicId: uuid }).strict(),
+    "payment.replacement.create": z.object({ paymentIntakePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200), expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/i) }).strict(),
+    "payment.replacement.duplicate-review.preview": z.object({ canonicalPaymentIntakePublicId: uuid, candidatePaymentIntakePublicIds: z.array(uuid).min(1).max(50), canonicalEvidenceCandidatePublicIds: z.array(uuid).max(50).optional(), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.replacement.duplicate-review.execute": z.object({ duplicateReviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), confirmed: z.literal(true), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.identity-decision.preview": z.object({ participantPaymentIntakePublicIds: z.array(uuid).min(2).max(50), decision: z.enum(["same_payment", "distinct_payment"]), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.identity-decision.execute": z.object({ identityDecisionPreviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), confirmed: z.literal(true), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.evidence-recovery.preview": z.object({ sourcePaymentIntakePublicId: uuid, reason: shortText, expectedCount: z.number().int().min(1).max(20), reuseEvidence: z.boolean(), requirementDecision: z.object({ confirmed: z.literal(true), reason: shortText }).strict().optional(), idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.evidence-recovery.execute": z.object({ recoveryPreviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), confirmed: z.literal(true), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.post": z.object({ paymentIntakePublicId: uuid, proposalPublicId: uuid }).strict(),
     "payment.reverse": z.object({
         paymentIntakePublicId: uuid,
@@ -1808,6 +1862,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         reason: shortText,
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
+    "loan.schedule.defer": z.object({ loanPublicId: uuid, schedulePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200), confirmed: z.literal(true) }).strict(),
     "loan.payment-history.list": z.object({ loanPublicId: uuid }).strict(),
     "loan.disbursement.draft": z.object({
         loanPublicId: uuid,
@@ -1958,6 +2013,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
     }).strict(),
     "intermediary.collection.list": z.object({ intermediaryPublicId: uuid.optional(), status: z.string().optional() }).strict(),
     "intermediary.collection.create": z.object({ intermediaryPublicId: uuid, borrowerPublicId: uuid, loanPublicId: uuid, amount: money, borrowerPaidAt: dateTime, bankReference: optionalNullableText, note: optionalNullableText, paymentIntakePublicId: uuid.nullable().optional(), idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "intermediary.collection.cancel": z.object({ collectionPublicId: uuid, expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/iu), reason: z.string().trim().min(1).max(2000), idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "intermediary.remittance.get": z.object({ remittancePublicId: uuid }).strict(),
     "intermediary.remittance.create": z.object({ intermediaryPublicId: uuid, grossAmount: money, receivedAt: dateTime, bankReference: optionalNullableText, destinationHint: optionalNullableText, note: optionalNullableText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "intermediary.remittance.allocations.save": z.object({ remittancePublicId: uuid, collectionPublicIds: z.array(uuid).min(1) }).strict(),
@@ -2066,6 +2122,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         cursor: z.string().trim().min(1).max(300).optional(), limit: z.number().int().min(1).max(100).optional(),
     }).strict(),
     "workflow.resolve": workflowResolverInput,
+    "tool.catalog.search": z.object({ query: z.string().trim().min(1).max(240), limit: z.number().int().min(1).max(10).optional(), cursor: z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/u).optional(), knownCatalogVersion: z.string().trim().min(1).max(160).optional(), knownGuidanceVersion: z.string().trim().min(1).max(160).optional() }).strict(),
 };
 
 const safeErrorSchema = z.object({
@@ -2143,11 +2200,11 @@ const readOnlyTools = new Set<McpToolName>([
     "borrower.resolve-and-portfolio",
     "intake.get",
     "intake.list",
+    "payment.replacement.inspect",
     "payment.batch.get",
     "payment.batch.workspace",
     "payment.batch.candidates",
     "loan.preview",
-    "loan.cancel.preview",
     "loan.interest-rate.list",
     "loan.disbursement.list",
     "loan.contract.get",
@@ -2173,6 +2230,7 @@ const readOnlyTools = new Set<McpToolName>([
     "payment.reverse-with-accrual.preview",
     "payment.reconcile.preflight",
     "workflow.resolve",
+    "tool.catalog.search",
 ]);
 const destructiveTools = new Set<McpToolName>([
     "borrower.update",
@@ -2186,6 +2244,14 @@ const destructiveTools = new Set<McpToolName>([
     "payment.preview",
     "payment.post",
     "payment.cancel",
+    "payment.restore.cancel",
+    "payment.replacement.create",
+    "payment.replacement.duplicate-review.preview",
+    "payment.replacement.duplicate-review.execute",
+    "payment.identity-decision.preview",
+    "payment.identity-decision.execute",
+    "payment.evidence-recovery.preview",
+    "payment.evidence-recovery.execute",
     "payment.reverse",
     "payment.batch.create",
     "payment.batch.capture",
@@ -2220,6 +2286,7 @@ const destructiveTools = new Set<McpToolName>([
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
@@ -2240,6 +2307,7 @@ const destructiveTools = new Set<McpToolName>([
     "intermediary.disbursement.evidence.finalize",
     "intermediary.disbursement.post",
     "intermediary.disbursement.reverse",
+    "intermediary.collection.cancel",
     "intermediary.remittance.post",
     "renewal.preview",
     "renewal.execute",
@@ -2251,6 +2319,10 @@ const destructiveTools = new Set<McpToolName>([
     "funding-allocation.create",
 ]);
 const financialTools = new Set<McpToolName>([
+    "payment.replacement.duplicate-review.execute",
+    "payment.identity-decision.execute",
+    "payment.evidence-recovery.execute",
+    "payment.replacement.create",
     "payment.post",
     "payment.reverse",
     "payment.reverse-with-accrual.execute",
@@ -2258,11 +2330,13 @@ const financialTools = new Set<McpToolName>([
     "payment.reconcile.reflow.execute",
     "payment.restore.execute",
     "payment.restore.schedule-backfill",
+    "payment.restore.cancel",
     "payment.restore.create",
     "payment.batch.execute",
     "payment.allocation-correction.execute",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
@@ -2278,6 +2352,7 @@ const financialTools = new Set<McpToolName>([
     "payment.intermediary-attribution.reverse",
     "intermediary.disbursement.post",
     "intermediary.disbursement.reverse",
+    "intermediary.collection.cancel",
     "intermediary.remittance.post",
     "renewal.execute",
     "renewal.reverse",
@@ -2300,6 +2375,13 @@ const idempotentTools = new Set<McpToolName>([
     "payment.evidence-supplement.record",
     "payment.post",
     "payment.cancel",
+    "payment.replacement.create",
+    "payment.replacement.duplicate-review.preview",
+    "payment.replacement.duplicate-review.execute",
+    "payment.identity-decision.preview",
+    "payment.identity-decision.execute",
+    "payment.evidence-recovery.preview",
+    "payment.evidence-recovery.execute",
     "payment.reverse",
     "payment.reverse-with-accrual.execute",
     "payment.reconcile.execute",
@@ -2308,11 +2390,13 @@ const idempotentTools = new Set<McpToolName>([
     "payment.reconcile.mark-review",
     "payment.restore.execute",
     "payment.restore.schedule-backfill",
+    "payment.restore.cancel",
     "payment.restore.create",
     "payment.batch.execute",
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
+    "loan.schedule.defer",
     "loan.interest-rate.execute",
     "loan.settlement.execute",
     "loan.settlement.reverse",
@@ -2334,6 +2418,7 @@ const idempotentTools = new Set<McpToolName>([
     "intermediary.disbursement.post",
     "intermediary.disbursement.reverse",
     "intermediary.collection.create",
+    "intermediary.collection.cancel",
     "intermediary.remittance.create",
     "intermediary.remittance.post",
     "renewal.execute",
@@ -2353,149 +2438,18 @@ const openWorldTools = new Set<McpToolName>([
     "payment.evidence-supplement.record",
 ]);
 
-const toolDescriptions: Record<McpToolName, string> = {
-    "borrower.search": "Search accessible borrowers by canonical name or confirmed alias.",
-    "borrower.portfolio": "Get one accessible borrower portfolio by public UUID.",
-    "borrower.resolve-and-portfolio": "Resolve one borrower without auto-selecting ambiguity and return a bounded portfolio.",
-    "borrower.create": "Create a borrower in the configured MCP tenant.",
-    "borrower.update": "Update an accessible borrower by public UUID.",
-    "borrower.alias": "Add, confirm, or deactivate a borrower alias.",
-    "intake.get": "Get a payment intake, evidence, and latest proposal.",
-    "payment.match-context": "Get a bounded, read-only payment matching context with borrower candidates and linked loan context.",
-    "intake.list": "List accessible payment intakes, optionally by status.",
-    "intake.create": "Create an idempotent payment intake from supplied payment data.",
-    "evidence.prepare": "Prepare a signed upload for payment evidence.",
-    "evidence.finalize": "Verify and finalize uploaded payment evidence.",
-    "evidence.import-chatgpt-file": "Import one attached ChatGPT file as verified payment evidence.",
-    "loan.disbursement.evidence.import-chatgpt-file": "Import one attached ChatGPT file as ready evidence for an exact loan disbursement draft.",
-    "payment.evidence-supplement.import-chatgpt-file": "Import one attached ChatGPT file as ready supplemental evidence for an exact posted payment.",
-    "payment.evidence-supplement.record": "Record ready supplemental evidence after explicit operator confirmation.",
-    "payment.preview": "Preview and persist a versioned payment match proposal.",
-    "payment.post": "Post a ready payment proposal atomically.",
-    "payment.cancel": "Cancel an authorized unposted payment intake with an immutable receipt.",
-    "payment.reverse": "Reverse a posted payment with compensating entries.",
-    "payment.reverse-with-accrual.preview": "Preview reversing a floating-loan payment and materializing missing interest accruals through the original payment date.",
-    "payment.reverse-with-accrual.execute": "Execute a confirmed atomic payment reversal with floating interest accrual materialization.",
-    "payment.batch.create": "Create an editable atomic payment batch.",
-    "payment.batch.capture": "Capture multiple payment intakes and batch items atomically.",
-    "payment.batch.evidence.prepare-many": "Prepare evidence for multiple payment batch items.",
-    "payment.batch.evidence.finalize-many": "Finalize evidence for multiple payment batch items.",
-    "payment.batch.item.add": "Add one payment intake to an atomic batch.",
-    "payment.batch.evidence.prepare": "Prepare evidence for a payment batch item.",
-    "payment.batch.evidence.finalize": "Finalize evidence for a payment batch item.",
-    "payment.batch.get": "Inspect an atomic payment batch and its latest preview.",
-    "payment.batch.stage": "Create resumable payment-batch staging items without inventing amount or transfer time.",
-    "payment.batch.staging.evidence.prepare": "Prepare upload-first evidence for one resumable staging item.",
-    "payment.batch.staging.evidence.finalize": "Finalize upload-first evidence for one resumable staging item.",
-    "payment.batch.staging.extract": "Extract review-only payment-slip candidates from finalized staging evidence using the local OCR pipeline.",
-    "payment.batch.workspace": "Inspect resumable batch staging metadata and public evidence status.",
-    "payment.batch.candidates": "Discover accessible named borrowers and backend-calculated contract candidates for one reviewed staging slip.",
-    "payment.batch.staging.review": "Review one staged payment item and create its linked intake.",
-    "payment.batch.staging.edit": "Edit one unposted staged payment item with revision and reason guards.",
-    "payment.batch.split": "Move selected unposted batch membership atomically into a new batch.",
-    "payment.batch.decision": "Record a revision-bound chronology review decision for a batch.",
-    "payment.batch.cancel": "Cancel an unposted batch with a revision-bound idempotent command.",
-    "payment.batch.preview": "Preview the complete atomic payment batch allocation.",
-    "payment.batch.execute": "Execute one explicitly confirmed atomic payment batch.",
-    "payment.reconcile.preview": "Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal.",
-    "payment.reconcile.reflow.preview": "Preview an append-only temporal repair for an existing executed reconciliation with complete floating-interest provenance.",
-    "payment.reconcile.reflow.execute": "Execute a confirmed idempotent temporal repair for an existing reconciliation.",
-    "payment.allocation-correction.preview": "Preview moving one posted scheduled repayment to another installment of the same active loan with exact component conservation.",
-    "payment.allocation-correction.execute": "Execute a confirmed, idempotent append-only scheduled payment allocation correction.",
-    "payment.reconcile.preflight": "Run a no-write execution feasibility check for an explicit payment reconciliation before confirmation.",
-    "payment.reconcile.mark-review": "Move an eligible ready backdated floating payment into reconciliation review after explicit confirmation.",
-    "payment.reconcile.execute": "Execute a confirmed, idempotent payment reconciliation with append-only provenance.",
-    "payment.restore.preview": "Preview exact restoration of a fully reversed payment using its original principal and interest components.",
-    "payment.restore.create": "Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview.",
-    "payment.restore.evidence.prepare": "Prepare a signed slip upload for one linked payment restore draft.",
-    "payment.restore.evidence.finalize": "Verify and finalize uploaded slip evidence for one linked payment restore draft.",
-    "payment.restore.execute": "Execute a confirmed, idempotent exact restoration of a reversed payment as a linked child intake.",
-    "payment.restore.schedule-backfill": "Repair derived schedule aggregates for one verified posted exact-payment restore without creating a payment.",
-    "loan.preview": "Preview an exact loan schedule without persistence.",
-    "loan.draft": "Create an editable loan draft.",
-    "loan.draft.delete": "Permanently delete an unactivated draft loan after dependency checks and audit logging.",
-    "loan.activate": "Activate a loan draft idempotently and create its schedule.",
-    "loan.interest-rate.list": "List the effective-dated floating-interest timeline and current exact daily interest.",
-    "loan.interest-rate.preview": "Preview an effective-dated floating-interest change and automatic timeline split.",
-    "loan.interest-rate.execute": "Execute an explicitly confirmed floating-interest preview idempotently.",
-    "loan.settlement.preview": "Preview and persist an exact floating-loan close-out composition.",
-    "loan.settlement.execute": "Execute an explicitly confirmed floating-loan close-out idempotently.",
-    "loan.settlement.reverse": "Reverse an executed floating-loan settlement through exact append-only compensation.",
-    "loan.cancel.preview": "Preview cancellation of an active loan with no actual disbursement and no remaining posted payments.",
-    "loan.cancel.execute": "Execute an explicitly confirmed unfunded-loan cancellation idempotently.",
-    "loan.replacement.preview": "Preview an atomic scheduled-loan replacement from an active loan into an existing funded draft.",
-    "loan.replacement.execute": "Execute an explicitly confirmed fresh atomic loan replacement idempotently.",
-    "loan.replacement.reverse": "Reverse an executed loan replacement only when authoritative downstream checks allow compensation.",
-    "loan.disbursement.list": "List actual loan disbursement events and variance read-only.",
-    "loan.contract.get": "Get complete accessible loan terms and repayment schedule read-only.",
-    "loan.inspect-context": "Inspect one accessible loan with a bounded summary, schedule, or payment-history view.",
-    "loan.payment-start-date.update": "Change the first repayment date while preserving posted payment history and auditing schedule amendments.",
-    "loan.payment-history.list": "List payment intakes and posted components for one accessible loan read-only.",
-    "loan.disbursement.draft": "Create an editable actual loan disbursement draft.",
-    "loan.disbursement.update": "Update supplied fields on an editable actual loan disbursement draft.",
-    "loan.disbursement.evidence.prepare": "Prepare a signed upload for loan disbursement evidence.",
-    "loan.disbursement.evidence.finalize": "Verify and finalize loan disbursement evidence.",
-    "loan.disbursement.post": "Post an actual loan disbursement idempotently.",
-    "loan.disbursement.reverse": "Reverse a posted loan disbursement with a reason.",
-    "loan.commission-participant.list": "List current effective-dated commission participants for an accessible loan.",
-    "loan.commission-participant.add": "Add a confirmed effective-dated commission participant idempotently.",
-    "loan.commission-participant.update": "End the current participant version and append a confirmed replacement version.",
-    "loan.commission-participant.end": "End a commission participant through a confirmed immutable successor version.",
-    "loan.commission.preview": "Preview exact commission derived only from posted payment interest components.",
-    "loan.commission.list": "List exact derived commission for supplied posted payment public UUIDs.",
-    "loan.commission.calculate": "Calculate exact derived commission for supplied posted payment public UUIDs.",
-    "loan.commission.reverse": "Preview the exact compensating commission effect of supplied posted reversal payments read-only; this never writes financial records or returns audit identifiers.",
-    "payment.intermediary-attribution.create": "Create a confirmed exact payment-source attribution idempotently.",
-    "payment.intermediary-attribution.list": "List append-only payment-source attribution entries for one accessible payment.",
-    "payment.intermediary-attribution.reverse": "Create a confirmed reasoned compensating attribution idempotently.",
-    "intermediary.search": "Search active intermediaries before creating a new record.",
-    "intermediary.create": "Create an intermediary after canonical-name review.",
-    "intermediary.profile.get": "Inspect one intermediary profile, masked bank accounts, and assignment history.",
-    "intermediary.bank-account.save": "Save an intermediary bank account and return only its masked public form.",
-    "intermediary.managed-loan.list": "List active loans managed by an intermediary through effective assignments.",
-    "intermediary.assignment.create": "Create an idempotent effective-dated loan intermediary assignment.",
-    "intermediary.assignment.end": "End an intermediary assignment without deleting its history.",
-    "intermediary.disbursement.list": "List intermediated disbursement groups by public filters.",
-    "intermediary.disbursement.get": "Inspect one intermediated group, its transfer events, and latest reconciliation preview.",
-    "intermediary.disbursement.create": "Create an exact intermediated disbursement group from persisted loan activation terms.",
-    "intermediary.disbursement.event.create": "Create one immutable-ready cash transfer event within an intermediated group.",
-    "intermediary.disbursement.evidence.prepare": "Prepare a signed upload for one transfer-event evidence item.",
-    "intermediary.disbursement.evidence.finalize": "Verify and finalize one transfer-event evidence item.",
-    "intermediary.disbursement.preview": "Persist an exact role-total, evidence-readiness, retained-balance, and variance preview.",
-    "intermediary.disbursement.post": "Atomically post an exact balanced intermediated group after explicit confirmation.",
-    "intermediary.disbursement.reverse": "Create a reasoned compensating reversal for one posted intermediated group.",
-    "intermediary.collection.list": "List borrower payments held by an intermediary.",
-    "intermediary.collection.create": "Record a borrower payment held by an intermediary without posting cash receipt twice.",
-    "intermediary.remittance.get": "Inspect a remittance, allocations, and exact remaining balance.",
-    "intermediary.remittance.create": "Create an idempotent intermediary remittance draft.",
-    "intermediary.remittance.allocations.save": "Select exact intermediary collections for a remittance.",
-    "intermediary.remittance.preview": "Preview the exact remittance reconciliation before posting.",
-    "intermediary.remittance.evidence.prepare": "Prepare a signed upload for remittance-slip evidence.",
-    "intermediary.remittance.evidence.finalize": "Verify and finalize remittance-slip evidence.",
-    "intermediary.remittance.post": "Post a balanced, explicitly confirmed intermediary remittance.",
-    "renewal.preview": "Preview a daily-loan renewal with backend-authoritative full-contract-interest composition by default.",
-    "renewal.execute": "Execute an unchanged confirmed renewal idempotently, with explicit collection acknowledgement when required.",
-    "renewal.reverse": "Reverse an executed renewal with compensating records.",
-    "loan.restructure.preview": "Preview an exact single-payment or floating-loan settlement and replacement contract from current balances.",
-    "loan.restructure.execute": "Execute an explicitly confirmed restructure preview idempotently.",
-    "loan.restructure.reverse": "Reverse an executed restructure when the authoritative downstream checks allow it.",
-    "loan.waiver.preview": "Preview an interest, fee, or penalty waiver against the current replacement-loan balance.",
-    "loan.waiver.execute": "Execute an explicitly confirmed component waiver preview idempotently.",
-    "loan.waiver.reverse": "Reverse an executed component waiver with a compensating record.",
-    "funding-source.list": "List tenant funding profiles and drawdowns read-only.",
-    "funding-allocation.preview": "Preview attaching an active funding profile or drawdown to an active loan.",
-    "funding-allocation.create": "Create an idempotent append-only funding allocation for an active loan, including after activation.",
-    "funding-allocation.list": "List append-only funding allocations for one loan read-only.",
-    "system.error-diagnostic.get": "Inspect a safe tenant-scoped MCP diagnostic trace by correlation ID.",
-    "system.error-diagnostic.list": "List recent safe tenant-scoped MCP diagnostics with bounded filters.",
-    "workflow.resolve": "Read-only workflow guidance from current authorized state; it never confirms, authorizes, previews, or executes a financial operation.",
-};
+
 
 function titleFor(toolName: McpToolName) {
     return toolName.split(/[.-]/u).map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(" ");
 }
 
-function completionText(toolName: McpToolName) {
+function completionText(toolName: McpToolName, result?: unknown) {
+    if (toolName === "tool.catalog.search") {
+        const search = result as { status?: string; matches?: Array<{ toolName?: string }> } | undefined;
+        const names = search?.matches?.map((match) => match.toolName).filter((name): name is string => typeof name === "string") ?? [];
+        return `Capability search status: ${search?.status ?? "unknown"}. Candidates: ${names.length ? names.join(", ") : "none"}. No other tool was executed.`;
+    }
     if (toolName === "loan.commission.reverse") return "Loan commission reversal preview completed.";
     const words = toolName.replace(/[.-]/gu, " ");
     return `${words[0]!.toUpperCase()}${words.slice(1)} completed.`;
@@ -2517,7 +2471,7 @@ function generatedJsonSchema(schema: z.ZodType) {
 
 const TOOL_CATALOG = deepFreeze(MCP_TOOL_NAMES.map((name) => ({
     name,
-    description: toolDescriptions[name],
+    description: describeTool(name),
     inputSchema: generatedJsonSchema(toolInputSchemas[name]),
     outputSchema: generatedJsonSchema(advertisedOutputSchema(name)),
     annotations: {
@@ -2735,7 +2689,7 @@ export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: Co
     const catalogVersion = input.catalog ? `mcp-fixture-${createHash("sha256").update(JSON.stringify(catalog)).digest("hex").slice(0, 16)}` : MCP_CATALOG_VERSION;
     const server = new Server({ name: "creditsync", version: "1.0.0" }, {
         capabilities: { tools: {} },
-        instructions: "CreditSync private tenant-scoped financial workflow tools. Call workflow.resolve at the start of a new financial intent and after stale state, evidence, or version changes; it is read-only guidance, not authorization or confirmation. Inspect and preview before posting financial changes.",
+        instructions: MCP_SERVER_INSTRUCTIONS,
     });
     server.setRequestHandler(ListToolsRequestSchema, (request) => {
         const paginated = profile !== "full";
@@ -2810,8 +2764,10 @@ export async function executeMcpToolCall(
             const handler = input.handlers[toolName];
             if (!handler) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
             const result = await handler(toolContext, toolName === "workflow.resolve"
-                ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __workflowVersion: WORKFLOW_VERSION }
-                : handlerInput);
+                ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __workflowVersion: WORKFLOW_VERSION, __guidanceVersion: TOOL_GUIDANCE_VERSION, __catalog: catalog }
+                : toolName === "tool.catalog.search"
+                    ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __guidanceVersion: TOOL_GUIDANCE_VERSION, __catalog: TOOL_CATALOG }
+                    : handlerInput);
             recordMcpBreadcrumb({ stage: "handler", outcome: "succeeded" });
             const auditPublicIds = requiresAudit ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result }) : undefined;
             if (requiresAudit && auditPublicIds?.length === 0) throw new DomainError("AUDIT_METADATA_UNAVAILABLE", "The financial command completed without retrievable public audit metadata", 503);
@@ -2822,7 +2778,7 @@ export async function executeMcpToolCall(
                 ? input.validateToolOutput(toolName, publicOutput)
                 : successOutputSchema(toolName as McpToolName).safeParse(publicOutput);
             if (!structuredContent.success) throw new DomainError("INVALID_TOOL_OUTPUT", "The application service returned data outside the public MCP contract", 422);
-            return { content: [{ type: "text" as const, text: completionText(toolName as McpToolName) }], structuredContent: structuredContent.data };
+            return { content: [{ type: "text" as const, text: completionText(toolName as McpToolName, publicData) }], structuredContent: structuredContent.data };
         } catch (error) {
             const snapshot = currentMcpDiagnosticSnapshot();
             const failedBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "failed" || breadcrumb.outcome === "rejected");
