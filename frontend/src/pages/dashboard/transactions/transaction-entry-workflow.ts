@@ -4,7 +4,7 @@ export interface ReceiptCommandContext { idempotencyKey: string; requestId: stri
 export interface ReceiptEntrySnapshot { receipt: PaymentWorkflowInput; allocations: PaymentAllocationInput[]; files: File[]; context: ReceiptCommandContext }
 export interface ReceiptEntryProgress { intakePublicId?: string; files: Record<string, { evidencePublicId: string; status: "pending" | "ready" }> }
 
-export interface ReceiptWorkflowError extends Error { code: string; intakePublicId?: string; reviewTargetPublicId?: string }
+export interface ReceiptWorkflowError extends Error { code: string; intakePublicId?: string; reviewTargetPublicId?: string; httpStatus?: number }
 type Dependencies = { put: typeof fetch; sha256: (file: File) => Promise<string> };
 type EvidenceIntent = { publicId: string; status?: string; uploadUrl?: string; requiredHeaders?: Record<string, string>; duplicate?: boolean };
 
@@ -37,7 +37,7 @@ function receiptMatches(detail: Record<string, unknown>, snapshot: ReceiptEntryS
         && (requirement?.expectedCount ?? 0) === snapshot.files.length;
 }
 
-export async function submitReceiptForReview(
+async function performReceiptReview(
     client: HttpClient,
     snapshot: ReceiptEntrySnapshot,
     progress: ReceiptEntryProgress,
@@ -99,4 +99,29 @@ export async function submitReceiptForReview(
     }
     await client.post(`/payment-intakes/${intakePublicId}/match-preview`, { allocations: snapshot.allocations }, tracingConfig(snapshot));
     return { intakePublicId };
+}
+
+export async function submitReceiptForReview(
+    client: HttpClient,
+    snapshot: ReceiptEntrySnapshot,
+    progress: ReceiptEntryProgress,
+    onProgress: (next: ReceiptEntryProgress) => void,
+    dependencies?: Dependencies,
+): Promise<{ intakePublicId: string }> {
+    try {
+        return await performReceiptReview(client, snapshot, progress, onProgress, dependencies);
+    } catch (error: unknown) {
+        const failure = (error && typeof error === "object" ? error : {}) as {
+            code?: string; reviewTargetPublicId?: string; response?: { status?: number; data?: { code?: string } };
+        };
+        // A review target is not an owned draft and must never enter retry progress.
+        if (failure.reviewTargetPublicId) throw error;
+        const normalized = workflowError(
+            failure.response?.data?.code ?? failure.code ?? "RECEIPT_SUBMISSION_FAILED",
+            error instanceof Error ? error.message : "Receipt submission failed",
+            progress.intakePublicId,
+        );
+        normalized.httpStatus = failure.response?.status;
+        throw normalized;
+    }
 }

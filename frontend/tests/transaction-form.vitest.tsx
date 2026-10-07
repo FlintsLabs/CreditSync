@@ -161,6 +161,10 @@ describe("TransactionForm", () => {
         expect(await screen.findByText(/draft remains saved/i)).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: "Cancel" }));
         expect(screen.getByRole("dialog")).toBeInTheDocument();
+        await user.keyboard("{Escape}");
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+        await user.click(screen.getByRole("button", { name: "Cancel" }));
         await user.click(screen.getByRole("button", { name: "Stay here" }));
         expect(screen.getByTestId("location")).toHaveTextContent("/transactions/new");
         await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -274,4 +278,43 @@ describe("TransactionForm", () => {
         expect(await screen.findByText(/floating-interest loans have no fixed installments/i)).toBeInTheDocument();
         expect(screen.queryByLabelText("Installment")).not.toBeInTheDocument();
     });
+    test("keeps the full 29-digit receipt difference including cents", async () => {
+        const user = userEvent.setup();
+        renderAt(`/transactions/new?loanId=${LOAN_A}`);
+        await waitFor(() => expect(screen.getByLabelText("Allocation amount 1")).toHaveValue("100.00"));
+        await user.upload(screen.getByLabelText("Add supporting files"), new File(["fixture"], "receipt.png", { type: "image/png" }));
+        await user.type(await screen.findByLabelText("Slip / receipt amount (฿)"), "12345678901234567890123456789.12");
+        expect(screen.getByText(/^Difference:/)).toHaveTextContent("12,345,678,901,234,567,890,123,456,689.12");
+        expect(screen.getByRole("button", { name: "Review payment" })).toBeDisabled();
+    });
+
+    test("opens the owned saved draft after a transport error in evidence preparation", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.post).mockImplementation(async (url) => {
+            if (url === "/payment-intakes") return { data: { publicId: INTAKE, duplicate: false } };
+            throw new Error("transport broke");
+        });
+        renderAt(`/transactions/new?loanId=${LOAN_A}`);
+        await waitFor(() => expect(screen.getByLabelText("Allocation amount 1")).toHaveValue("100.00"));
+        await user.upload(screen.getByLabelText("Add supporting files"), new File(["fixture"], "receipt.png", { type: "image/png" }));
+        await user.type(await screen.findByLabelText("Slip / receipt amount (฿)"), "100.00");
+        await user.click(screen.getByRole("button", { name: "Review payment" }));
+        expect(await screen.findByRole("link", { name: "Open saved draft" })).toHaveAttribute("href", `/payments?intake=${INTAKE}`);
+        expect(screen.getByRole("alert")).not.toHaveTextContent("transport broke");
+    });
+
+    test("warns before leaving when receipt creation has an unknown outcome", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.post).mockRejectedValue(new Error("connection lost"));
+        renderAt(`/transactions/new?loanId=${LOAN_A}`);
+        await waitFor(() => expect(screen.getByLabelText("Allocation amount 1")).toHaveValue("100.00"));
+        await user.click(screen.getByRole("button", { name: "Review payment" }));
+        await screen.findByRole("alert");
+        await user.click(screen.getByRole("button", { name: "Cancel" }));
+        expect(await screen.findByRole("dialog")).toHaveTextContent(/outcome.*unknown/i);
+        expect(screen.getByTestId("location")).toHaveTextContent("/transactions/new");
+        await user.keyboard("{Escape}");
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    });
+
 });

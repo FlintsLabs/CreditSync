@@ -314,6 +314,9 @@
         }
     },
     "transactionsForm": {
+        "leaveTitle": "Leave payment form?",
+        "unknownOutcome": "The outcome of this receipt request is unknown. A receipt may have been saved. Retry the same request before leaving to avoid duplicates.",
+        "floatingNoScheduleShort": "No fixed installments (floating)",
         "title": "Record Repayment",
         "details": "Receipt and allocations",
         "allocations": "Contract allocations",
@@ -371,7 +374,7 @@
         "errors": {
             "loadLoans": "Unable to load loans.",
             "loadSchedule": "Unable to load borrower schedule.",
-            "recordFailed": "Record failed",
+            "recordFailed": "Unable to save this receipt. Retry the same request or open its saved draft.",
             "selectLoan": "Select a valid loan before recording the payment.",
             "amount": "Enter a payment amount greater than zero with no more than two decimal places.",
             "fileCount": "Choose no more than 20 supporting files.",

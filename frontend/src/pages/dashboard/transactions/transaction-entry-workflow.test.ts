@@ -147,4 +147,16 @@ describe("submitReceiptForReview", () => {
         await expect(submitReceiptForReview(makeClient(post), snapshot([file("one.png")]), { files: {} }, vi.fn(), { put: vi.fn() as unknown as typeof fetch, sha256: async () => "hash" })).rejects.toMatchObject({ code: "DUPLICATE_EVIDENCE" });
         expect(post.mock.calls.some(([url]) => String(url).endsWith("match-preview"))).toBe(false);
     });
+    it("retains the owned intake and domain error when an evidence API call fails", async () => {
+        const failure = Object.assign(new Error("request failed"), {
+            code: "ERR_BAD_REQUEST", response: { status: 409, data: { code: "EVIDENCE_UPLOAD_EXPIRED" } },
+        });
+        const post = vi.fn().mockResolvedValueOnce({ data: { publicId: "intake-1", duplicate: false } }).mockRejectedValueOnce(failure);
+        const progress: ReceiptEntryProgress = { files: {} };
+        await expect(submitReceiptForReview(makeClient(post), snapshot([file("one.png")]), progress, vi.fn(), {
+            put: vi.fn() as unknown as typeof fetch, sha256: async () => "a".repeat(64),
+        })).rejects.toMatchObject({ code: "EVIDENCE_UPLOAD_EXPIRED", intakePublicId: "intake-1" });
+        expect(progress.intakePublicId).toBe("intake-1");
+    });
+
 });
