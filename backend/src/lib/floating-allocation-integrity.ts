@@ -37,8 +37,14 @@ export type FloatingAllocationIssue = {
  * recorded after the requested business date. Apply date cutoffs only after
  * resolving the complete reversal lineage; the ledger remains append-only. */
 export function activeFloatingPaymentAllocations<T extends Pick<FloatingIntegrityAllocation, "id" | "entryType" | "reversedAllocationId">>(rows: T[]): T[] {
-    const reversedIds = new Set(rows.filter((row) => row.reversedAllocationId !== null).map((row) => row.reversedAllocationId!));
-    return rows.filter((row) => row.entryType === "payment" && !reversedIds.has(row.id));
+    const reversals = new Map<number, number[]>();
+    for (const row of rows) if (row.reversedAllocationId !== null) reversals.set(row.reversedAllocationId, [...(reversals.get(row.reversedAllocationId) ?? []), row.id]);
+    const hasActiveEffect = (id: number): boolean => {
+        const children = reversals.get(id) ?? [];
+        if (!children.length) return true;
+        return children.some((child) => !hasActiveEffect(child));
+    };
+    return rows.filter((row) => row.entryType === "payment" && hasActiveEffect(row.id));
 }
 
 export function findFloatingAllocationIssues(input: {

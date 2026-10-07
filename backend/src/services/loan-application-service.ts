@@ -25,6 +25,7 @@ import {
 import type { CommandContext } from "./command-context";
 import { getLoanReadPaymentHealth } from "./loan-payment-health-service";
 import { floatingInterestBalances } from "./floating-interest-service";
+import { getLoanAccrualReceiptHistory } from "./loan-accrual-history-service";
 import { assertLoanFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { DomainError } from "./domain-error";
 import {
@@ -571,7 +572,7 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string, 
         remainingAmount: serializeMoney(FinancialDecimal.max(new FinancialDecimal(row.interestAmount).minus(row.paidAmount), 0)),
         status: row.status,
     });
-    let accruals = accrualRows.map(presentAccrual);
+    let accruals: Array<ReturnType<typeof presentAccrual> & { receiptHistory?: Awaited<ReturnType<typeof getLoanAccrualReceiptHistory>>[number]["receipts"] }> = accrualRows.map(presentAccrual);
     if (options.includeAccruals !== false && options.projectedAccrualsAsOf
         && loan.status === "active" && loan.repaymentType === "floating"
         && loan.firstDayTreatment && loan.interestStartDate && loan.dailyInterestMode && loan.dailyInterestRate) {
@@ -582,6 +583,11 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string, 
         accruals = [...byPublicId.values()].sort((left, right) => left.accrualDate.localeCompare(right.accrualDate)
             || left.publicId.localeCompare(right.publicId));
         base.outstandingInterest = balances.dueInterest.toFixed(2);
+    }
+    if (options.projectedAccrualsAsOf && loan.repaymentType === "floating") {
+        const histories = await getLoanAccrualReceiptHistory(ctx, loan.publicId);
+        const historyByDate = new Map(histories.map((item) => [item.accrualDate, item.receipts]));
+        accruals = accruals.map((row) => ({ ...row, receiptHistory: historyByDate.get(row.accrualDate) ?? [] }));
     }
     const replacementLineage = replacementLineages.get(loan.id) ?? null;
     if (!inbound && !outbound) return { ...base, replacementLineage, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [], accruals };

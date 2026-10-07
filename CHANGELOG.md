@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.70 - 2026-10-07
+
+### Added
+
+- Added selected-date floating daily-interest payment previews and confirmed postings, with immutable target provenance, exact cached balance refresh, receipt/audit identifiers, safe retries, historical allocation checks, and per-accrual receipt history in Loan Detail.
+- Added a bilingual Accrual payment dialog that records actual Bangkok receipt time separately from selected accrual dates and preserves draft/post idempotency through retries.
+
+### Fixed
+
+- Repaired the pre-existing duplicate Drizzle snapshot UUID/parent chain in snapshots 0057/0058 so generated migration metadata can advance consistently; schema tables were unchanged by that metadata repair.
+
 ## v0.4.69 - 2026-10-07
 
 ### Changed

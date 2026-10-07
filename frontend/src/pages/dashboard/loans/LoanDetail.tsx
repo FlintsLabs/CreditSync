@@ -56,6 +56,8 @@ interface LoanDetailData {
         maxOverdueDays: number;
     };
     status: string;
+    floatingAccrualCycle?: "daily" | "weekly" | "monthly" | null;
+    interestPeriodUnit?: "day" | "week" | "month" | null;
     bankProfilePublicId?: string | null;
     bankLoanPublicId?: string | null;
     floatingInterestPolicy?: FloatingInterestPolicyView | null;
@@ -607,7 +609,7 @@ export default function LoanDetail() {
                         : tab === "schedule"
                             ? <LoanRepaymentScheduleTab loanPublicId={loan.publicId} />
                             : tab === "accruals"
-                                ? <LoanAccrualsTab rows={loan.accruals ?? []} />
+                                ? <LoanAccrualsTab rows={loan.accruals ?? []} loanPublicId={loan.publicId} canPaySelectedAccrual={loan.status === "active" && loan.repaymentType === "floating" && loan.floatingAccrualCycle === "daily" && loan.interestPeriodUnit === "day" && Boolean(loan.floatingInterestPolicy)} onRefresh={async () => { const latest = await fetchLoanDetail<LoanDetailData>(loan.publicId); setLoan(latest); }} />
                             : <LoanInformationTab>
                 <>
                     {loan.repaymentType === "daily" && loan.dailyLoanCalculation && (
