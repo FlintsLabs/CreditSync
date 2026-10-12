@@ -34,6 +34,7 @@ import { api } from "../../lib/api";
 import { formatMoneyExact } from "../../lib/workflow-model";
 import { getStoredUser, isTenantAdminUser } from "../../lib/session";
 import DashboardCollectionSummary from "./DashboardCollectionSummary";
+import CashflowForecastingCard from "./analytics/CashflowForecastingCard";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/Button";
 import {
@@ -448,6 +449,10 @@ export default function Dashboard() {
       )}
 
       <DashboardAnalyticsSection analytics={analytics} />
+
+      <div className="grid min-w-0 gap-4 mb-6">
+        <CashflowForecastingCard />
+      </div>
 
       <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.4fr)]">
         <Card className="h-fit border-primary/20">
