@@ -58,10 +58,10 @@ export function AIAssistant() {
     };
 
     return (
-        <div data-testid="ai-assistant-root" className="fixed bottom-[calc(6rem+var(--safe-area-bottom))] md:bottom-8 right-4 md:right-8 z-[100] flex flex-col items-end">
+        <div data-testid="ai-assistant-root" className="fixed bottom-24 md:bottom-8 right-4 md:right-8 z-[100] flex flex-col items-end">
             {/* Chat Window */}
             {isOpen && (
-                <Card style={{ maxHeight: "calc(100dvh - 11rem - var(--safe-area-bottom))" }} className="w-[min(380px,calc(100vw-2rem))] md:w-[380px] h-[450px] mb-4 shadow-2xl flex min-h-0 flex-col animate-in slide-in-from-bottom-5 duration-300 transition-none motion-reduce:duration-0 motion-reduce:animate-none">
+                <Card style={{ maxHeight: "calc(100dvh - 11rem - var(--safe-area-bottom))" }} className="w-[min(380px,calc(100vw-2rem))] md:w-[380px] h-[450px] mb-4 shadow-2xl rounded-2xl border border-border/50 flex min-h-0 flex-col animate-in slide-in-from-bottom-5 duration-300 transition-none motion-reduce:duration-0 motion-reduce:animate-none">
                     <CardHeader className="shrink-0 p-4 border-b flex flex-row items-center justify-between space-y-0">
                         <div className="flex items-center gap-2">
                             <Bot className="h-5 w-5 text-primary" />
