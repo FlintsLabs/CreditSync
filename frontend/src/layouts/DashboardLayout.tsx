@@ -130,7 +130,7 @@ export default function DashboardLayout() {
                     <div className="fixed inset-0 z-[110] flex md:hidden">
                         {/* Backdrop */}
                         <div
-                            className="fixed inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 motion-reduce:animate-none"
+                            className="fixed inset-0 bg-black/40 backdrop-blur-md animate-in fade-in duration-200 motion-reduce:animate-none"
                             onClick={() => setIsMobileMenuOpen(false)}
                         />
 
@@ -173,10 +173,10 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="min-w-0 flex-1 overflow-x-hidden p-4 pb-[calc(6rem+var(--safe-area-bottom))] md:p-8 md:pb-8">
+                <main className="min-w-0 flex-1 overflow-x-hidden p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-8 md:pb-8">
                     <Outlet />
                 </main>
-                <footer data-testid="application-footer" className="border-t px-4 pr-20 py-4 pb-[calc(6rem+var(--safe-area-bottom))] text-xs text-muted-foreground md:px-8 md:pr-24 md:pb-4">
+                <footer data-testid="application-footer" className="border-t px-4 pr-20 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] text-xs text-muted-foreground md:px-8 md:pr-24 md:pb-4">
                     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                         <a
                             className="font-medium text-foreground underline-offset-4 hover:underline"
